@@ -52,3 +52,13 @@ def ejecutar(db):
             FOREIGN KEY(cliente_id) REFERENCES clientes (id)
         )"""))
         con.commit()
+        # Motor de asesorias (parte 1): columnas nuevas
+        cols_cat = {r[1] for r in con.execute(text("PRAGMA table_info(asesorias_catalogo)"))}
+        if cols_cat and "es_fija" not in cols_cat:
+            con.execute(text("ALTER TABLE asesorias_catalogo ADD COLUMN es_fija BOOLEAN DEFAULT 0"))
+        cols_ac = {r[1] for r in con.execute(text("PRAGMA table_info(asesorias_cliente)"))}
+        if cols_ac and "cantidad" not in cols_ac:
+            con.execute(text("ALTER TABLE asesorias_cliente ADD COLUMN cantidad INTEGER DEFAULT 1"))
+        if "renta_base" not in cols:
+            con.execute(text("ALTER TABLE clientes ADD COLUMN renta_base FLOAT"))
+        con.commit()

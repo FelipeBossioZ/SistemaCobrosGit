@@ -31,13 +31,17 @@
 
 Autodeteccion de ubicacion (CASA/OFICINA) intacta, archivo local por PC en `%LOCALAPPDATA%\SistemaCobros\ubicacion.txt`.
 
-## 2. GIT LOCAL (nuevo)
-- **777**: repositorio con commit inicial `Estado inicial pruebas 777...` + commit `Etapa 0...`. Hacer commit despues de cada sesion:
-  `git -C "Z:\OneDrive\OFICINA\FELIPE\Oficina Felipe\6-Presupuestos\SistemaPruebas" add -A`
-  `git -C "..." commit -m "descripcion del cambio"`
-- **Produccion**: repo inicializado y TODO STAGED (index = estado actual). Sin commits todavia, por decision de Felipe.
-- `.gitignore` en ambos: excluye `instance/`, `__pycache__/`, `Respaldos BD/`, `Respaldo codigo */`, `salidas/`.
-- El .git viaja por OneDrive (es chico, solo texto). No interfere con la sync.
+## 2. GIT (nuevo, conectado a GitHub)
+- **Remoto unico para ambos:** https://github.com/FelipeBossioZ/SistemaCobrosGit
+- **Ramas:** `produccion` = codigo de produccion 5001 (commit c7ace5b, incluye Etapa 0). `pruebas777` = desarrollo (commits 37060fb inicial + dcac199 Etapa 0). Existe ademas `master` en GitHub porque es la rama default del repo; hoy apunta igual a produccion (ignorable).
+- **Flujo acordado:** todo cambio NACE en pruebas777 -> cuando Felipe aprueba, se copia a produccion y se sube a la rama `produccion`.
+- **Comandos tipo** (desde cualquier PC):
+  - Guardar en pruebas: `git add -A` + `git commit -m "..."` + `git push` (la rama local master de esa carpeta empuja a origin/pruebas777)
+  - Guardar en produccion: `git add -A` + `git commit -m "..."` + `git push` (empuja a origin/master); para actualizar tambien la rama produccion: `git push origin master:produccion`
+- `.gitignore` en ambos: excluye `instance/`, `__pycache__/`, `Respaldos BD/`, `Respaldo codigo */`, `salidas/`, `*.db`.
+- **Las BD NO viajan por git** (siguen viajando por OneDrive, cada instalacion con la suya).
+- **PC de oficina:** las carpetas llegan por OneDrive con su .git y remote ya configurados; no hay que clonar nada. Solo la PRIMERA vez que pida credenciales al hacer push, loguearse a GitHub (el Credential Manager de Windows las guarda).
+- **Regla de oro:** trabajar de a un PC a la vez y `git push` al cerrar la sesion (el .git se sincroniza por OneDrive; evitar commits simultaneos en ambas maquinas).
 
 ## 3. VENV (respuesta a la duda de Felipe)
 - `instalar_venv.bat` pregunta DONDE crear el venv (default `C:\EntornosPython\SistemaCobros-venv`), lo crea FUERA de OneDrive y escribe la ruta en `%LOCALAPPDATA%\SistemaCobros\entorno_venv.txt` (archivo LOCAL por PC; OneDrive no lo sincroniza).
@@ -62,7 +66,7 @@ Q1 renta base: ¿guardar al confirmar (recomendado, auditable) o derivar en vivo
 Q2 sin match en maestro: se marca y se lista (propuesto y aceptado en linea general: color + nota visible).
 Q3 estandares viejos de IVA/RF por antiguedad: ¿el preliminar propone estandar y Felipe baja a mano, o migrar valores viejos?
 Q4 RST_SIMPLE presentada: ¿cuenta como renta OK? (caso Christian Cock).
-Q5 git en produccion: ¿cuando hacemos el primer commit? (hoy esta todo staged).
+Q5 git en produccion: RESUELTO 26/09 - primer commit hecho y subido a GitHub (produccion + pruebas777).
 
 ## 6. PENDIENTOS MENORES
 - Purga de `__pycache__` de OneDrive (hay .pyc 313 y 314 mezclados; el .gitignore ya no los versiona, falta excluirlos de sync si Felipe quiere).

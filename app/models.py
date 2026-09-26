@@ -100,6 +100,7 @@ class Cliente(db.Model):
     moroso_nota = db.Column(db.String(300), default="")             # nota del módulo de morosos
     moroso_cerrado = db.Column(db.Boolean, default=False)           # True = pagó de menos por acuerdo interno (no es moroso)
     decl_renta = db.Column(db.String(12), default="")            # ""=sin dato, NO_OBLIGADO, PRESENTADA
+    renta_base = db.Column(db.Float)                             # base confirmada del paquete (None = derivar del presupuesto)
 
     grupo_id = db.Column(db.Integer, db.ForeignKey("grupos_familiares.id"))
     es_pagador = db.Column(db.Boolean, default=False)            # a nombre de quién sale la cuenta del grupo
@@ -183,6 +184,7 @@ class AsesoriaCatalogo(db.Model):
     defecto_pct = db.Column(db.Float, default=0.0)        # % estándar de la oficina
     defecto_valor = db.Column(db.Float, default=0.0)      # tarifa fija estándar
     base_min = db.Column(db.String(60), default="")
+    es_fija = db.Column(db.Boolean, default=False)   # True = tarifa fija x cantidad; False = % de la renta base
     activo = db.Column(db.Boolean, default=True)
 
 
@@ -198,6 +200,7 @@ class AsesoriaCliente(db.Model):
     incluir = db.Column(db.Boolean, default=True)
     pct = db.Column(db.Float)                             # None = estándar
     valor = db.Column(db.Float)                           # None = estándar
+    cantidad = db.Column(db.Integer, default=1)           # solo tarifas fijas (IVA, RF...)
 
     __table_args__ = (db.UniqueConstraint("cliente_id", "asesoria_id", name="uq_asesoria_cliente"),)
 

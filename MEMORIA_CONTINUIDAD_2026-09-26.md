@@ -70,6 +70,21 @@ Aprobaciones ya dadas (25/09 17:25 + 26/09):
 - Smoke test: app arriba, /parametros /asesorias /clientes/1 -> 200.
 - Decisiones cerradas por Felipe: IVA/RF estandar propuesto y el baja a mano por cliente; RST_SIMPLE presentada cuenta como renta OK; tolerancia de redondeo fija +/- $1.000.
 
+## 4c. MOTOR PARTE 2 - HECHO Y PROBADO (26/09 ~10:00, commit 9037bee)
+- **`app/maestro.py` (nuevo):** lee obligaciones del maestro por NIT. Mapeo: RENTA=RENTA_PN/PJ, RST_SIMPLE=RST, IP=PATRIMONIO, EXO_MPIO=EXG_MED, F2516=FORMATO_2516/2517, CAMARA=REGISTRO_MERCANTIL, etc. Reglas de periodo: anuales = AG-<gravable> o AG-<anio_cobro>, o periodo vacio SOLO si scanner dice PRESENTADA/PAGADA (caso Cock: RST sin periodo); periodicos (IVA, RF, CONSUMO, ANTICIPO_RST, CAMARA) = periodo que empieza con el anio de cobro (cuenta cantidad).
+- **Total en plata real:** la ficha ahora muestra subtotales en pesos. % de renta x BASE; base = renta_base guardada del cliente, si no existe se DERIVA del presupuesto: (presupuesto - fijas incluidas) / (suma % incluidos / 100). Tarifas fijas = valor x cantidad (cantidad editable, el masivo la llena con el conteo del maestro).
+- **Boton "Traer del maestro"** en la ficha (individual) + **"Traer asesorias del maestro"** masivo en Clientes. Ambos releen el maestro cada vez, no pisan valores editados, marcan lo presentado y dejan badge verde "nuevo del maestro" en las filas nuevas.
+- **Guardar/Confirmar** en la ficha: amarra la renta base del cliente; si total vs presupuesto difiere <= $1.000 o es igual, presupuesto se queda; si difiere de verdad, se actualiza. Log SIEMPRE en presupuesto_historial: primera vez nota automatica "Revision inicial", despues exige nota (modal). Segunda confirmacion sin nota devuelve pide_nota=true.
+- **Badges en la lista de Clientes:** rojo "no encontrado en maestro" y amarillo "sin NIT - no en maestro" (visibles al voleo). Prueba del 26/09: 113 clientes con datos (151 filas), 56 sin datos en maestro, 1 sin NIT.
+- **Photo card auditable:** columnas Tarifa/Cant./Subtotal, muestra base usada, y cinta verde "Auditado con el Sistema Maestro" cuando hay datos del maestro.
+- **Pruebas reales hechas:** masivo -> 151 filas en 113 clientes (RENTA 101, IP 15, ACT_EXT 9, IVA 11, CAMARA 4, RST_SIMPLE 2 -incluye Christian Cock-, ICA 8, CONSUMO 1). Cliente 7 (Alvarez Londono Martha, pres. 1.920.000): base derivada 1.280.000, Renta 100% + IP 50% = 1.920.000 exacto; confirmar -> presupuesto intacto, renta_base 1.280.000 guardada, log "Revision inicial" creado.
+- **BD del 777 quedo con datos de prueba reales** (asesorias_cliente poblada por el masivo + 1 confirmacion). Es el ambiente de pruebas: Felipe puede seguir probando sobre eso; si quiere partir de cero: borrar filas de asesorias_cliente, renta_base y presupuesto_historial (o pedirselo al agente).
+
+### Falta (Fase C / pendientes del motor)
+1. Excel exportable con columna "debio cobrarse X (sistema) vs cobrado Y" para cuentas ENVIADA/PAGADA (auditoria de cobros).
+2. Prelleno del desglose estandar automatico (Fase C original: estados por asesoria desde maestro ya estan en la data; falta UI para estados individuales por obligacion).
+3. Regla "renta pendiente = aviso amarillo" en la ficha (la data del maestro ya distingue PRESENTADA de pendiente; falta pintar el aviso).
+
 ## 5. PREGUNTAS ABIERTAS (las respuestas llegan por chat)
 Q1 renta base: ¿guardar al confirmar (recomendado, auditable) o derivar en vivo?
 Q2 sin match en maestro: se marca y se lista (propuesto y aceptado en linea general: color + nota visible).

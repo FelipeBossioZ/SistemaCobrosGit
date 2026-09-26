@@ -863,7 +863,21 @@ def cliente_detalle(cid):
     filas_asesorias, base_asesorias = _asesorias_filas(cli, a)
     total_asesorias = sum(fx["subtotal"] for fx in filas_asesorias)
     presup_act = next((p.valor for p in presup if p.anio_cobro == (a.anio_cobro if a else None)), 0)
+    import json as _json
+    datos_js = {
+        "base": float(base_asesorias or 0),
+        "presup": float(presup_act or 0),
+        "renta_base": float(cli.renta_base or 0),
+        "filas": [{"id": fx["it"].id, "nombre": fx["it"].nombre, "fija": bool(fx["fija"]),
+                   "pct": fx["pct"], "valor": fx["valor"], "cantidad": fx["cantidad"],
+                   "incluir": bool(fx["incluir"]),
+                   "std_pct": float(fx["it"].defecto_pct or 0),
+                   "std_val": float(fx["it"].defecto_valor or 0),
+                   "base_min": (fx["it"].base_min or ""),
+                   "en_maestro": bool(fx["en_maestro"])} for fx in filas_asesorias],
+    }
     return render_template("cliente_detalle.html", cli=cli, presup=presup,
+                           datos_asesorias=_json.dumps(datos_js),
                            historial=historial, a=a,
                            filas_asesorias=filas_asesorias,
                            total_asesorias=total_asesorias,
@@ -1023,23 +1037,200 @@ def cliente_asesorias_confirmar(cid):
                        error="Escribe la nota del cambio (es obligatoria desde la segunda confirmación)")
     cambios = []
     if anterior <= 0:
-        p.valor = float(total)
-        cambios.append("presupuesto fijado en $ %s" % f"{total:,.0f}")
+        cambios.append("aun no hay presupuesto construido: quedo amarrada la base y el paquete")
     elif total == anterior:
-        cambios.append("total confirmado coincide con el presupuesto: se deja igual")
+        cambios.append("paquete cuadra con el presupuesto")
     elif abs(total - anterior) <= 1000:
-        cambios.append("diferencia de redondeo ($ %s): presupuesto se deja igual" % f"{total - anterior:,.0f}")
+        cambios.append("diferencia de redondeo ($ %s) tolerada" % f"{total - anterior:,.0f}")
     else:
-        p.valor = float(total)
-        cambios.append("presupuesto actualizado $ %s -> $ %s (diferencia real, confirmada)"
-                       % (f"{anterior:,.0f}", f"{total:,.0f}"))
+        return jsonify(ok=False, requiere_recalculo=True,
+                       error="El paquete ($ %s) no cuadra con el presupuesto ($ %s). "
+                             "Pulsa Recalcular (ajusta la base al presupuesto) y vuelve a guardar."
+                       % (f"{total:,.0f}", f"{anterior:,.0f}"))
     cli.renta_base = base
     db.session.add(PresupuestoHistorial(cliente_id=cid, anio_cobro=a.anio_cobro,
-                                        valor_anterior=anterior, valor_nuevo=float(p.valor),
+                                        valor_anterior=anterior, valor_nuevo=float(anterior),
                                         motivo=nota[:300], fecha=date.today()))
     db.session.commit()
     msg = "Paquete confirmado. Renta base: $ %s. %s. Nota: %s" % (f"{base:,.0f}", ". ".join(cambios), nota[:80])
-    return jsonify(ok=True, mensaje=msg, base=base, total=total, presupuesto=float(p.valor))
+    return jsonify(ok=True, mensaje=msg, base=base, total=total, presupuesto=float(anterior))
+
+
+@bp.route("/clientes/<int:cid>/presupuesto-paquete", methods=["POST"])
+def cliente_presupuesto_paquete(cid):
+    """Construye el presupuesto desde la BASE (modal de la ficha):
+    aplica las marcas del modal, amarra la renta base y fija
+    presupuesto = base x % marcados + tarifas fijas x cantidad.
+    El valor NUNCA se digita: se calcula. Deja log obligatorio y
+    regenera PDFs borrador / deja nota interna en ENVIADA-PAGADA."""
+    import json as _json
+    from flask import jsonify
+    cli = db.get_or_404(Cliente, cid)
+    a = anio_actual()
+    if not a:
+        return jsonify(ok=False, error="No hay año activo")
+    try:
+        base = float(request.form.get("base") or 0)
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="Base inválida")
+    if base <= 0:
+        return jsonify(ok=False, error="La base debe ser mayor que cero")
+    motivo = (request.form.get("motivo") or "").strip()
+    ya_historia = (db.session.query(PresupuestoHistorial.id)
+                   .filter_by(cliente_id=cid, anio_cobro=a.anio_cobro).first() is not None)
+    if ya_historia and not motivo:
+        return jsonify(ok=False, pide_nota=True,
+                       error="Escribe el motivo del cambio (es obligatorio desde la segunda vez)")
+    if not motivo:
+        motivo = "Revisión inicial"
+    try:
+        marcas = _json.loads(request.form.get("marcas") or "[]")
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="Marcas inválidas")
+    aplicar_marcas = (request.form.get("aplicar_marcas") or "1") == "1"
+    items = {it.id: it for it in AsesoriaCatalogo.query.filter(AsesoriaCatalogo.activo == True).all()}
+    aplicadas = 0
+    for mrc in (marcas if aplicar_marcas else []):
+        try:
+            aid = int(mrc.get("id") or 0)
+        except (TypeError, ValueError):
+            continue
+        it = items.get(aid)
+        if not it:
+            continue
+        if it.tipo != "TODOS" and it.tipo != (cli.tipo or "PN"):
+            continue
+        x = AsesoriaCliente.query.filter_by(cliente_id=cid, asesoria_id=it.id).first()
+        if x is None:
+            x = AsesoriaCliente(cliente_id=cid, asesoria_id=it.id)
+            db.session.add(x)
+        x.incluir = bool(mrc.get("incluir"))
+        if it.es_fija:
+            if mrc.get("valor") is not None:
+                try:
+                    v = float(mrc.get("valor") or 0)
+                    x.valor = v if v > 0 else None
+                except (TypeError, ValueError):
+                    pass
+            try:
+                c = int(mrc.get("cantidad") or 1)
+            except (TypeError, ValueError):
+                c = 1
+            x.cantidad = max(1, c)
+        else:
+            if mrc.get("pct") is not None:
+                try:
+                    q = float(mrc.get("pct") or 0)
+                    x.pct = q if q > 0 else None
+                except (TypeError, ValueError):
+                    pass
+        aplicadas += 1
+    # total calculado con la MISMA fórmula de la ficha (sobre el estado recién aplicado)
+    total = 0.0
+    for it in items.values():
+        if it.tipo != "TODOS" and it.tipo != (cli.tipo or "PN"):
+            continue
+        x = AsesoriaCliente.query.filter_by(cliente_id=cid, asesoria_id=it.id).first()
+        if x is None or not x.incluir:
+            continue
+        if it.es_fija:
+            val = x.valor if (x.valor is not None and x.valor > 0) else float(it.defecto_valor or 0)
+            total += val * (x.cantidad or 1)
+        else:
+            pct = x.pct if (x.pct is not None and x.pct > 0) else float(it.defecto_pct or 0)
+            total += pct / 100.0 * base
+    total = round(total)
+    p = PresupuestoCliente.query.filter_by(cliente_id=cid, anio_cobro=a.anio_cobro).first()
+    if p is None:
+        p = PresupuestoCliente(cliente_id=cid, anio_cobro=a.anio_cobro, valor=0.0)
+        db.session.add(p)
+    anterior = float(p.valor or 0)
+    p.valor = float(total)
+    cli.renta_base = base
+    db.session.add(PresupuestoHistorial(cliente_id=cid, anio_cobro=a.anio_cobro,
+                                        valor_anterior=anterior, valor_nuevo=float(total),
+                                        motivo=("base $ %s; %s" % (f"{base:,.0f}", motivo))[:300],
+                                        fecha=date.today()))
+    # cuentas BORRADOR: regenerar PDF; ENVIADA/PAGADA: nota interna (igual que antes)
+    regenerados, marcadas = [], []
+    lineas_cli = (CuentaLinea.query.filter_by(cliente_id=cid, estado="ACTIVA").all())
+    cuentas = []
+    for l in lineas_cli:
+        cta = l.cuenta
+        if cta.anio_cobro_id == a.id and cta.estado != "ANULADA" and cta not in cuentas:
+            cuentas.append(cta)
+    for cta in cuentas:
+        if cta.estado == "BORRADOR" and cta.envios.count() == 0:
+            carpeta = _carpeta_pdfs()
+            generar_pdf(cta, os.path.join(carpeta, _nombre_pdf(cta)))
+            regenerados.append(cta.numero_formateado)
+        elif cta.estado in ("ENVIADA", "PAGADA") or cta.envios.count() > 0:
+            nota = (f"Error en el cálculo de la cuenta. Valor real de servicios {a.anio_cobro}: "
+                    f"$ {total:,.0f} (presupuesto anterior: $ {anterior:,.0f}). "
+                    f"Motivo: {motivo[:200]}. Ver photo card en cliente.")
+            cta.observaciones = ((cta.observaciones or "") + "\n" + nota).strip()
+            marcadas.append(cta.numero_formateado)
+    db.session.commit()
+    msg = (f"Presupuesto {a.anio_cobro}: $ {anterior:,.0f} -> $ {total:,.0f} "
+           f"(base $ {base:,.0f} × marcas). {aplicadas} asesorías aplicadas."
+           + (f" PDF regenerado: {', '.join(regenerados)}." if regenerados else "")
+           + (f" NOTA interna en: {', '.join(marcadas)}." if marcadas else ""))
+    return jsonify(ok=True, base=base, total=total, presupuesto=float(total),
+                   aplicadas=aplicadas, mensaje=msg)
+
+
+@bp.route("/clientes/<int:cid>/asesorias-revertir", methods=["POST"])
+def cliente_asesorias_revertir(cid):
+    """Vuelve las marcas al estado que trae el maestro (borra las manuales).
+    Repetible cuantas veces se quiera SIEMPRE que el paquete no haya sido
+    confirmado (Guardar) en el año activo."""
+    from flask import jsonify
+    from .maestro import leer_maestro
+    cli = db.get_or_404(Cliente, cid)
+    a = anio_actual()
+    if not a:
+        return jsonify(ok=False, error="No hay año activo")
+    ya = (db.session.query(PresupuestoHistorial.id)
+          .filter_by(cliente_id=cid, anio_cobro=a.anio_cobro).first())
+    if ya:
+        return jsonify(ok=False, error="El paquete ya fue confirmado este año: "
+                                       "no se puede revertir automáticamente")
+    nit = (cli.nit or "").strip()
+    if not nit:
+        return jsonify(ok=False, error="El cliente no tiene NIT guardado")
+    m = leer_maestro(a.anio_cobro, a.anio_gravable, {nit}) or {}
+    bruto = m.get(nit) or {}
+    cod2id = {c.codigo: c.id for c in AsesoriaCatalogo.query.all()}
+    datos = {cod2id[k]: v for k, v in bruto.items() if k in cod2id}
+    encendidas, apagadas = 0, 0
+    items = AsesoriaCatalogo.query.filter(AsesoriaCatalogo.activo == True).all()
+    for it in items:
+        if it.tipo != "TODOS" and it.tipo != (cli.tipo or "PN"):
+            continue
+        x = AsesoriaCliente.query.filter_by(cliente_id=cid, asesoria_id=it.id).first()
+        debe = it.id in datos
+        if x is None:
+            if not debe:
+                continue
+            x = AsesoriaCliente(cliente_id=cid, asesoria_id=it.id, incluir=True)
+            db.session.add(x)
+            encendidas += 1
+        else:
+            if debe and not x.incluir:
+                encendidas += 1
+            if (not debe) and x.incluir:
+                apagadas += 1
+            x.incluir = debe
+        # al revertir, los valores vuelven al estándar del catálogo
+        x.pct = None
+        x.valor = None
+        if debe and it.es_fija:
+            cant_m = datos[it.id][0] if datos[it.id][0] else 1
+            x.cantidad = max(1, int(cant_m))
+    db.session.commit()
+    return jsonify(ok=True, encendidas=encendidas, apagadas=apagadas,
+                   mensaje="Marcas revertidas al maestro: %d encendidas, %d apagadas."
+                           % (encendidas, apagadas))
 
 
 @bp.route("/clientes/asesorias-maestro-todos", methods=["POST"])

@@ -282,7 +282,7 @@ document.addEventListener("change", e => {
   const t = e.target;
   // --- ficha del cliente ---
   const tr = t.closest("tr[data-ac]");
-  if (tr && (t.classList.contains("ac-incluir") || t.classList.contains("ac-pct") || t.classList.contains("ac-val") || t.classList.contains("ac-cant"))) {
+  if (tr && (t.classList.contains("ac-incluir") || t.classList.contains("ac-cant"))) {
     const body = new FormData();
     body.append("asesoria_id", tr.dataset.ac);
     body.append("incluir", tr.querySelector(".ac-incluir").checked ? "1" : "0");

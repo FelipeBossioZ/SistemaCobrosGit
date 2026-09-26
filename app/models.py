@@ -100,6 +100,7 @@ class Cliente(db.Model):
     moroso_nota = db.Column(db.String(300), default="")             # nota del módulo de morosos
     moroso_cerrado = db.Column(db.Boolean, default=False)           # True = pagó de menos por acuerdo interno (no es moroso)
     decl_renta = db.Column(db.String(12), default="")            # ""=sin dato, NO_OBLIGADO, PRESENTADA
+    renta_base = db.Column(db.Float)                             # base confirmada del paquete (None = derivar del presupuesto)
 
     grupo_id = db.Column(db.Integer, db.ForeignKey("grupos_familiares.id"))
     es_pagador = db.Column(db.Boolean, default=False)            # a nombre de quién sale la cuenta del grupo
@@ -152,6 +153,56 @@ class Cliente(db.Model):
                 return "GRUPO PENDIENTE: " + ", ".join(faltan[:3]) + ("..." if len(faltan) > 3 else "")
             return "GRUPO AL DÍA"
         return "AL DÍA"
+
+
+class PresupuestoHistorial(db.Model):
+    """Auditoría de cambios del presupuesto anual de un cliente.
+    El motivo es obligatorio: queda documentado por qué se movió el valor."""
+    __tablename__ = "presupuesto_historial"
+
+    id = db.Column(db.Integer, primary_key=True)
+    cliente_id = db.Column(db.Integer, db.ForeignKey("clientes.id"), nullable=False, index=True)
+    anio_cobro = db.Column(db.Integer, nullable=False)
+    valor_anterior = db.Column(db.Float, default=0.0)
+    valor_nuevo = db.Column(db.Float, default=0.0)
+    motivo = db.Column(db.String(300), nullable=False)
+    fecha = db.Column(db.Date, nullable=False)
+
+
+class AsesoriaCatalogo(db.Model):
+    """Catálogo de asesorías/trámites que la oficina cobra.
+    Los estándares de la oficina viven aquí (editables en Parámetros → Asesorías).
+    tipo: PN | PJ | TODOS.  pct: % del valor base;  valor: tarifa fija.
+    base_min: texto informativo ('RETEFUENTE', 'SMLV/mes', 'IVA base $...', ...)."""
+    __tablename__ = "asesorias_catalogo"
+
+    id = db.Column(db.Integer, primary_key=True)
+    orden = db.Column(db.Integer, default=100)
+    codigo = db.Column(db.String(40), unique=True, nullable=False)
+    nombre = db.Column(db.String(120), nullable=False)
+    tipo = db.Column(db.String(8), default="TODOS")      # PN | PJ | TODOS
+    defecto_pct = db.Column(db.Float, default=0.0)        # % estándar de la oficina
+    defecto_valor = db.Column(db.Float, default=0.0)      # tarifa fija estándar
+    base_min = db.Column(db.String(60), default="")
+    es_fija = db.Column(db.Boolean, default=False)   # True = tarifa fija x cantidad; False = % de la renta base
+    activo = db.Column(db.Boolean, default=True)
+
+
+class AsesoriaCliente(db.Model):
+    """Asesorías incluidas en el paquete de un cliente para el año de cobro.
+    pct/valor en None => usa el estándar del catálogo. La suma es el total del
+    paquete que se compara con el presupuesto anual del cliente."""
+    __tablename__ = "asesorias_cliente"
+
+    id = db.Column(db.Integer, primary_key=True)
+    cliente_id = db.Column(db.Integer, db.ForeignKey("clientes.id"), nullable=False)
+    asesoria_id = db.Column(db.Integer, db.ForeignKey("asesorias_catalogo.id"), nullable=False)
+    incluir = db.Column(db.Boolean, default=True)
+    pct = db.Column(db.Float)                             # None = estándar
+    valor = db.Column(db.Float)                           # None = estándar
+    cantidad = db.Column(db.Integer, default=1)           # solo tarifas fijas (IVA, RF...)
+
+    __table_args__ = (db.UniqueConstraint("cliente_id", "asesoria_id", name="uq_asesoria_cliente"),)
 
 
 def saludo_de_cliente(p):

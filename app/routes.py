@@ -12,7 +12,8 @@ from flask import (Blueprint, render_template, request, redirect, url_for,
 
 from .models import (db, Parametro, AnioCobro, GrupoFamiliar, Cliente,
                      PresupuestoCliente, CuentaCobro, CuentaLinea, Envio,
-                     Ajuste, Pago, ESTADOS, TrabajoAdicional, saludo_de_cliente)
+                     Ajuste, Pago, ESTADOS, TrabajoAdicional, saludo_de_cliente,
+                     AsesoriaCatalogo, AsesoriaCliente, PresupuestoHistorial)
 from .pdf_generator import generar_pdf, ruta_pdf
 from . import rutas_comunes
 
@@ -288,9 +289,22 @@ def clientes():
         n = sum(1 for k in n_correos if any(k.startswith(s + "_") for s in slugs))
         if n:
             correos[cli.id] = n
+    # aviso visible: clientes sin obligaciones presentadas en el maestro (o sin NIT)
+    maestro_check = {}
+    if a and lista:
+        from .maestro import leer_maestro
+        nits_lista = {(c.nit or "").strip() for c in lista} - {""}
+        m_check = leer_maestro(a.anio_cobro, a.anio_gravable, nits_lista) if nits_lista else {}
+        for c in lista:
+            n = (c.nit or "").strip()
+            if not n:
+                maestro_check[c.id] = "sin NIT"
+            elif not (m_check or {}).get(n):
+                maestro_check[c.id] = "no_encontrado"
     return render_template("clientes.html", clientes=lista, ver=ver,
                            presup=presup, a=a, correos=correos,
                            estados_cobro=estados_cobro, pagado_actual=pagado_actual,
+                           maestro_check=maestro_check,
                            grupos=GrupoFamiliar.query.order_by(GrupoFamiliar.nombre))
 
 
@@ -344,6 +358,29 @@ def cliente_cobrado_todo(cid):
     cli.cobrado_anterior_real = pa
     db.session.commit()
     return jsonify(ok=True, valor=pa)
+
+
+@bp.route("/clientes/<int:cid>/photo-card")
+def cliente_photo_card(cid):
+    """Photo card: desglose imprimible de todo lo que se le está cobrando al cliente
+    (para enviarle o mostrarle cuando la pida)."""
+    cli = db.get_or_404(Cliente, cid)
+    a = anio_actual()
+    todas, _base_pc = _asesorias_filas(cli, a) if a else ([], 0.0)
+    hay_maestro = any(f["en_maestro"] for f in todas)
+    filas = [f for f in todas if f["incluir"]]
+    excluidas = len(todas) - len(filas)
+    total = sum(f["subtotal"] for f in filas)
+    presup = 0.0
+    if a:
+        p = PresupuestoCliente.query.filter_by(cliente_id=cid, anio_cobro=a.anio_cobro).first()
+        presup = float(p.valor or 0) if p else 0.0
+    trabajos = cli.trabajos.order_by(TrabajoAdicional.fecha.desc(), TrabajoAdicional.id.desc()).all()
+    return render_template("photo_card.html", cli=cli, a=a, filas=filas,
+                           excluidas=excluidas, total=total, presup=presup,
+                           hay_maestro=hay_maestro,
+                           trabajos=trabajos, hoy=date.today(),
+                           emisor=Parametro.get("emisor_nombre", ""))
 
 
 @bp.route("/clientes/<int:cid>/moroso-cerrar", methods=["POST"])
@@ -823,9 +860,425 @@ def cliente_detalle(cid):
             "envios": [{"fecha": e.fecha, "medio": e.medio} for e in c.envios],
         })
     historial.sort(key=lambda h: (h["anio"], h["numero"]))
+    filas_asesorias, base_asesorias = _asesorias_filas(cli, a)
+    total_asesorias = sum(fx["subtotal"] for fx in filas_asesorias)
+    presup_act = next((p.valor for p in presup if p.anio_cobro == (a.anio_cobro if a else None)), 0)
+    import json as _json
+    datos_js = {
+        "base": float(base_asesorias or 0),
+        "presup": float(presup_act or 0),
+        "renta_base": float(cli.renta_base or 0),
+        "filas": [{"id": fx["it"].id, "nombre": fx["it"].nombre, "fija": bool(fx["fija"]),
+                   "pct": fx["pct"], "valor": fx["valor"], "cantidad": fx["cantidad"],
+                   "incluir": bool(fx["incluir"]),
+                   "std_pct": float(fx["it"].defecto_pct or 0),
+                   "std_val": float(fx["it"].defecto_valor or 0),
+                   "base_min": (fx["it"].base_min or ""),
+                   "en_maestro": bool(fx["en_maestro"])} for fx in filas_asesorias],
+    }
     return render_template("cliente_detalle.html", cli=cli, presup=presup,
+                           datos_asesorias=_json.dumps(datos_js),
                            historial=historial, a=a,
+                           filas_asesorias=filas_asesorias,
+                           total_asesorias=total_asesorias,
+                           base_asesorias=base_asesorias,
+                           presup_act=presup_act or 0,
                            grupos=GrupoFamiliar.query.order_by(GrupoFamiliar.nombre))
+
+
+@bp.route("/clientes/<int:cid>/presupuesto-guardar", methods=["POST"])
+def cliente_presupuesto_guardar(cid):
+    """Cambia el presupuesto del año activo CON motivo obligatorio. Registra el
+    historial y aplica la regla de cuentas:
+      - BORRADOR (o sin cuenta): regenera el PDF de las cuentas borrador del cliente.
+      - ENVIADA / PAGADA: NO toca el PDF; deja nota interna en cada cuenta afectada.
+    Devuelve JSON con el resultado para la ficha."""
+    from flask import jsonify
+    cli = db.get_or_404(Cliente, cid)
+    a = anio_actual()
+    if not a:
+        return jsonify(ok=False, error="No hay año activo")
+    valor_raw = (request.form.get("valor") or "").strip()
+    motivo = (request.form.get("motivo") or "").strip()
+    try:
+        nuevo = float(valor_raw) if valor_raw else 0.0
+    except ValueError:
+        return jsonify(ok=False, error="Valor inválido")
+    if not motivo:
+        return jsonify(ok=False, error="El motivo es obligatorio para cambiar el presupuesto")
+    p = PresupuestoCliente.query.filter_by(cliente_id=cid, anio_cobro=a.anio_cobro).first()
+    if p is None:
+        p = PresupuestoCliente(cliente_id=cid, anio_cobro=a.anio_cobro, valor=0.0)
+        db.session.add(p)
+    anterior = float(p.valor or 0)
+    if abs(nuevo - anterior) < 0.5:
+        return jsonify(ok=False, error="El valor es igual al actual")
+    p.valor = nuevo
+    db.session.add(PresupuestoHistorial(cliente_id=cid, anio_cobro=a.anio_cobro,
+                                        valor_anterior=anterior, valor_nuevo=nuevo,
+                                        motivo=motivo[:300], fecha=date.today()))
+    # ---- cuentas del cliente en el año activo ----
+    regenerados, marcadas = [], []
+    lineas_cli = (CuentaLinea.query.filter_by(cliente_id=cid, estado="ACTIVA").all())
+    cuentas = []
+    for l in lineas_cli:
+        cta = l.cuenta
+        if cta.anio_cobro_id == a.id and cta.estado != "ANULADA" and cta not in cuentas:
+            cuentas.append(cta)
+    for cta in cuentas:
+        if cta.estado == "BORRADOR" and cta.envios.count() == 0:
+            carpeta = _carpeta_pdfs()
+            generar_pdf(cta, os.path.join(carpeta, _nombre_pdf(cta)))
+            regenerados.append(cta.numero_formateado)
+        elif cta.estado in ("ENVIADA", "PAGADA") or cta.envios.count() > 0:
+            nota = (f"Error en el cálculo de la cuenta. Valor real de servicios {a.anio_cobro}: "
+                    f"$ {nuevo:,.0f} (presupuesto anterior: $ {anterior:,.0f}). "
+                    f"Motivo: {motivo[:200]}. Ver photo card en cliente.")
+            cta.observaciones = ((cta.observaciones or "") + "\n" + nota).strip()
+            marcadas.append(cta.numero_formateado)
+    db.session.commit()
+    return jsonify(ok=True, anterior=anterior, nuevo=nuevo,
+                   regenerados=regenerados, marcadas=marcadas,
+                   mensaje=(f"Presupuesto {a.anio_cobro}: $ {anterior:,.0f} -> $ {nuevo:,.0f}. "
+                            + (f"PDF regenerado: {', '.join(regenerados)}. " if regenerados else "")
+                            + (f"NOTA interna dejada en: {', '.join(marcadas)}. " if marcadas else "")
+                            + f"Motivo registrado: {motivo[:80]}"))
+
+
+@bp.route("/clientes/<int:cid>/presupuesto-historial")
+def cliente_presupuesto_historial(cid):
+    """Filas del historial de presupuesto del cliente (para la ficha)."""
+    from flask import jsonify
+    hist = (PresupuestoHistorial.query.filter_by(cliente_id=cid)
+            .order_by(PresupuestoHistorial.fecha.desc(), PresupuestoHistorial.id.desc()).limit(30).all())
+    return jsonify(ok=True, filas=[{"fecha": h.fecha.strftime("%d/%m/%Y"),
+                                    "anio": h.anio_cobro,
+                                    "anterior": h.valor_anterior, "nuevo": h.valor_nuevo,
+                                    "motivo": h.motivo} for h in hist])
+
+
+@bp.route("/clientes/<int:cid>/asesorias-maestro", methods=["POST"])
+def cliente_asesorias_maestro(cid):
+    """Trae del maestro lo PRESENTADO del cliente (boton de la ficha).
+    Marca/incluye las asesorias presentadas; no pisa % ni valores editados."""
+    from flask import jsonify
+    from .maestro import leer_maestro
+    cli = db.get_or_404(Cliente, cid)
+    a = anio_actual()
+    if not a:
+        return jsonify(ok=False, error="No hay año activo")
+    nit = (cli.nit or "").strip()
+    if not nit:
+        return jsonify(ok=False, error="El cliente no tiene NIT guardado")
+    m = leer_maestro(a.anio_cobro, a.anio_gravable, {nit}) or {}
+    bruto = m.get(nit) or {}
+    cod2id = {c.codigo: c.id for c in AsesoriaCatalogo.query.all()}
+    datos = {cod2id[k]: v for k, v in bruto.items() if k in cod2id}
+    if not datos:
+        return jsonify(ok=False, encontrado=False,
+                       error="El maestro no muestra obligaciones presentadas para el NIT %s" % nit)
+    agregadas, ya = [], []
+    for aid in datos:
+        it = db.session.get(AsesoriaCatalogo, aid)
+        if not it or not it.activo:
+            continue
+        if it.tipo != "TODOS" and it.tipo != (cli.tipo or "PN"):
+            continue
+        x = AsesoriaCliente.query.filter_by(cliente_id=cid, asesoria_id=aid).first()
+        if x is None:
+            x = AsesoriaCliente(cliente_id=cid, asesoria_id=aid, incluir=True)
+            if it.es_fija:
+                x.cantidad = max(1, datos[aid][0])
+            db.session.add(x)
+            agregadas.append(it.nombre)
+        elif not x.incluir:
+            x.incluir = True
+            if it.es_fija:
+                x.cantidad = max(1, datos[aid][0])
+            agregadas.append(it.nombre)
+        else:
+            ya.append(it.nombre)
+    db.session.commit()
+    msg = "Traído del maestro: %s." % (", ".join(agregadas) if agregadas else "nada nuevo")
+    if ya:
+        msg += " Ya estaban incluidas: %s." % ", ".join(ya)
+    return jsonify(ok=True, agregadas=agregadas, ya=ya, mensaje=msg)
+
+
+@bp.route("/clientes/<int:cid>/asesorias-confirmar", methods=["POST"])
+def cliente_asesorias_confirmar(cid):
+    """Confirma el paquete de asesorias visible en la ficha:
+    - fija la renta base del cliente (los % quedan amarrados a ella)
+    - si el total difiere del presupuesto solo por redondeo (±$1.000), el
+      presupuesto NO se toca; si difiere de verdad, se actualiza al valor real
+    - registra log en el historial: primera vez con nota automatica 'Revision
+      inicial', despues SIEMPRE con nota escrita por el usuario."""
+    from flask import jsonify
+    cli = db.get_or_404(Cliente, cid)
+    a = anio_actual()
+    if not a:
+        return jsonify(ok=False, error="No hay año activo")
+    nota = (request.form.get("motivo") or "").strip()
+    filas, base = _asesorias_filas(cli, a)
+    if not base or base <= 0:
+        return jsonify(ok=False, error="No pude calcular la renta base (marca al menos una asesoría en % o revisa el presupuesto)")
+    total = round(sum(f["subtotal"] for f in filas))
+    p = PresupuestoCliente.query.filter_by(cliente_id=cid, anio_cobro=a.anio_cobro).first()
+    if p is None:
+        p = PresupuestoCliente(cliente_id=cid, anio_cobro=a.anio_cobro, valor=0.0)
+        db.session.add(p)
+    anterior = float(p.valor or 0)
+    ya_historia = (db.session.query(PresupuestoHistorial.id)
+                   .filter_by(cliente_id=cid, anio_cobro=a.anio_cobro).first() is not None)
+    if not ya_historia and not nota:
+        nota = "Revisión inicial"
+    if not nota:
+        return jsonify(ok=False, pide_nota=True,
+                       error="Escribe la nota del cambio (es obligatoria desde la segunda confirmación)")
+    cambios = []
+    if anterior <= 0:
+        cambios.append("aun no hay presupuesto construido: quedo amarrada la base y el paquete")
+    elif total == anterior:
+        cambios.append("paquete cuadra con el presupuesto")
+    elif abs(total - anterior) <= 1000:
+        cambios.append("diferencia de redondeo ($ %s) tolerada" % f"{total - anterior:,.0f}")
+    else:
+        return jsonify(ok=False, requiere_recalculo=True,
+                       error="El paquete ($ %s) no cuadra con el presupuesto ($ %s). "
+                             "Pulsa Recalcular (ajusta la base al presupuesto) y vuelve a guardar."
+                       % (f"{total:,.0f}", f"{anterior:,.0f}"))
+    cli.renta_base = base
+    db.session.add(PresupuestoHistorial(cliente_id=cid, anio_cobro=a.anio_cobro,
+                                        valor_anterior=anterior, valor_nuevo=float(anterior),
+                                        motivo=nota[:300], fecha=date.today()))
+    db.session.commit()
+    msg = "Paquete confirmado. Renta base: $ %s. %s. Nota: %s" % (f"{base:,.0f}", ". ".join(cambios), nota[:80])
+    return jsonify(ok=True, mensaje=msg, base=base, total=total, presupuesto=float(anterior))
+
+
+@bp.route("/clientes/<int:cid>/presupuesto-paquete", methods=["POST"])
+def cliente_presupuesto_paquete(cid):
+    """Construye el presupuesto desde la BASE (modal de la ficha):
+    aplica las marcas del modal, amarra la renta base y fija
+    presupuesto = base x % marcados + tarifas fijas x cantidad.
+    El valor NUNCA se digita: se calcula. Deja log obligatorio y
+    regenera PDFs borrador / deja nota interna en ENVIADA-PAGADA."""
+    import json as _json
+    from flask import jsonify
+    cli = db.get_or_404(Cliente, cid)
+    a = anio_actual()
+    if not a:
+        return jsonify(ok=False, error="No hay año activo")
+    try:
+        base = float(request.form.get("base") or 0)
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="Base inválida")
+    if base <= 0:
+        return jsonify(ok=False, error="La base debe ser mayor que cero")
+    motivo = (request.form.get("motivo") or "").strip()
+    ya_historia = (db.session.query(PresupuestoHistorial.id)
+                   .filter_by(cliente_id=cid, anio_cobro=a.anio_cobro).first() is not None)
+    if ya_historia and not motivo:
+        return jsonify(ok=False, pide_nota=True,
+                       error="Escribe el motivo del cambio (es obligatorio desde la segunda vez)")
+    if not motivo:
+        motivo = "Revisión inicial"
+    try:
+        marcas = _json.loads(request.form.get("marcas") or "[]")
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="Marcas inválidas")
+    aplicar_marcas = (request.form.get("aplicar_marcas") or "1") == "1"
+    items = {it.id: it for it in AsesoriaCatalogo.query.filter(AsesoriaCatalogo.activo == True).all()}
+    aplicadas = 0
+    for mrc in (marcas if aplicar_marcas else []):
+        try:
+            aid = int(mrc.get("id") or 0)
+        except (TypeError, ValueError):
+            continue
+        it = items.get(aid)
+        if not it:
+            continue
+        if it.tipo != "TODOS" and it.tipo != (cli.tipo or "PN"):
+            continue
+        x = AsesoriaCliente.query.filter_by(cliente_id=cid, asesoria_id=it.id).first()
+        if x is None:
+            x = AsesoriaCliente(cliente_id=cid, asesoria_id=it.id)
+            db.session.add(x)
+        x.incluir = bool(mrc.get("incluir"))
+        if it.es_fija:
+            if mrc.get("valor") is not None:
+                try:
+                    v = float(mrc.get("valor") or 0)
+                    x.valor = v if v > 0 else None
+                except (TypeError, ValueError):
+                    pass
+            try:
+                c = int(mrc.get("cantidad") or 1)
+            except (TypeError, ValueError):
+                c = 1
+            x.cantidad = max(1, c)
+        else:
+            if mrc.get("pct") is not None:
+                try:
+                    q = float(mrc.get("pct") or 0)
+                    x.pct = q if q > 0 else None
+                except (TypeError, ValueError):
+                    pass
+        aplicadas += 1
+    # total calculado con la MISMA fórmula de la ficha (sobre el estado recién aplicado)
+    total = 0.0
+    for it in items.values():
+        if it.tipo != "TODOS" and it.tipo != (cli.tipo or "PN"):
+            continue
+        x = AsesoriaCliente.query.filter_by(cliente_id=cid, asesoria_id=it.id).first()
+        if x is None or not x.incluir:
+            continue
+        if it.es_fija:
+            val = x.valor if (x.valor is not None and x.valor > 0) else float(it.defecto_valor or 0)
+            total += val * (x.cantidad or 1)
+        else:
+            pct = x.pct if (x.pct is not None and x.pct > 0) else float(it.defecto_pct or 0)
+            total += pct / 100.0 * base
+    total = round(total)
+    p = PresupuestoCliente.query.filter_by(cliente_id=cid, anio_cobro=a.anio_cobro).first()
+    if p is None:
+        p = PresupuestoCliente(cliente_id=cid, anio_cobro=a.anio_cobro, valor=0.0)
+        db.session.add(p)
+    anterior = float(p.valor or 0)
+    p.valor = float(total)
+    cli.renta_base = base
+    db.session.add(PresupuestoHistorial(cliente_id=cid, anio_cobro=a.anio_cobro,
+                                        valor_anterior=anterior, valor_nuevo=float(total),
+                                        motivo=("base $ %s; %s" % (f"{base:,.0f}", motivo))[:300],
+                                        fecha=date.today()))
+    # cuentas BORRADOR: regenerar PDF; ENVIADA/PAGADA: nota interna (igual que antes)
+    regenerados, marcadas = [], []
+    lineas_cli = (CuentaLinea.query.filter_by(cliente_id=cid, estado="ACTIVA").all())
+    cuentas = []
+    for l in lineas_cli:
+        cta = l.cuenta
+        if cta.anio_cobro_id == a.id and cta.estado != "ANULADA" and cta not in cuentas:
+            cuentas.append(cta)
+    for cta in cuentas:
+        if cta.estado == "BORRADOR" and cta.envios.count() == 0:
+            carpeta = _carpeta_pdfs()
+            generar_pdf(cta, os.path.join(carpeta, _nombre_pdf(cta)))
+            regenerados.append(cta.numero_formateado)
+        elif cta.estado in ("ENVIADA", "PAGADA") or cta.envios.count() > 0:
+            nota = (f"Error en el cálculo de la cuenta. Valor real de servicios {a.anio_cobro}: "
+                    f"$ {total:,.0f} (presupuesto anterior: $ {anterior:,.0f}). "
+                    f"Motivo: {motivo[:200]}. Ver photo card en cliente.")
+            cta.observaciones = ((cta.observaciones or "") + "\n" + nota).strip()
+            marcadas.append(cta.numero_formateado)
+    db.session.commit()
+    msg = (f"Presupuesto {a.anio_cobro}: $ {anterior:,.0f} -> $ {total:,.0f} "
+           f"(base $ {base:,.0f} × marcas). {aplicadas} asesorías aplicadas."
+           + (f" PDF regenerado: {', '.join(regenerados)}." if regenerados else "")
+           + (f" NOTA interna en: {', '.join(marcadas)}." if marcadas else ""))
+    return jsonify(ok=True, base=base, total=total, presupuesto=float(total),
+                   aplicadas=aplicadas, mensaje=msg)
+
+
+@bp.route("/clientes/<int:cid>/asesorias-revertir", methods=["POST"])
+def cliente_asesorias_revertir(cid):
+    """Vuelve las marcas al estado que trae el maestro (borra las manuales).
+    Repetible cuantas veces se quiera SIEMPRE que el paquete no haya sido
+    confirmado (Guardar) en el año activo."""
+    from flask import jsonify
+    from .maestro import leer_maestro
+    cli = db.get_or_404(Cliente, cid)
+    a = anio_actual()
+    if not a:
+        return jsonify(ok=False, error="No hay año activo")
+    ya = (db.session.query(PresupuestoHistorial.id)
+          .filter_by(cliente_id=cid, anio_cobro=a.anio_cobro).first())
+    if ya:
+        return jsonify(ok=False, error="El paquete ya fue confirmado este año: "
+                                       "no se puede revertir automáticamente")
+    nit = (cli.nit or "").strip()
+    if not nit:
+        return jsonify(ok=False, error="El cliente no tiene NIT guardado")
+    m = leer_maestro(a.anio_cobro, a.anio_gravable, {nit}) or {}
+    bruto = m.get(nit) or {}
+    cod2id = {c.codigo: c.id for c in AsesoriaCatalogo.query.all()}
+    datos = {cod2id[k]: v for k, v in bruto.items() if k in cod2id}
+    encendidas, apagadas = 0, 0
+    items = AsesoriaCatalogo.query.filter(AsesoriaCatalogo.activo == True).all()
+    for it in items:
+        if it.tipo != "TODOS" and it.tipo != (cli.tipo or "PN"):
+            continue
+        x = AsesoriaCliente.query.filter_by(cliente_id=cid, asesoria_id=it.id).first()
+        debe = it.id in datos
+        if x is None:
+            if not debe:
+                continue
+            x = AsesoriaCliente(cliente_id=cid, asesoria_id=it.id, incluir=True)
+            db.session.add(x)
+            encendidas += 1
+        else:
+            if debe and not x.incluir:
+                encendidas += 1
+            if (not debe) and x.incluir:
+                apagadas += 1
+            x.incluir = debe
+        # al revertir, los valores vuelven al estándar del catálogo
+        x.pct = None
+        x.valor = None
+        if debe and it.es_fija:
+            cant_m = datos[it.id][0] if datos[it.id][0] else 1
+            x.cantidad = max(1, int(cant_m))
+    db.session.commit()
+    return jsonify(ok=True, encendidas=encendidas, apagadas=apagadas,
+                   mensaje="Marcas revertidas al maestro: %d encendidas, %d apagadas."
+                           % (encendidas, apagadas))
+
+
+@bp.route("/clientes/asesorias-maestro-todos", methods=["POST"])
+def clientes_asesorias_maestro_todos():
+    """Trae del maestro lo PRESENTADO de TODOS los clientes activos (masivo)."""
+    from .maestro import leer_maestro
+    a = anio_actual()
+    if not a:
+        flash("No hay año activo", "error")
+        return redirect(url_for("main.clientes"))
+    activos = Cliente.query.filter_by(activo=True).all()
+    nits = {(c.nit or "").strip() for c in activos} - {""}
+    m = leer_maestro(a.anio_cobro, a.anio_gravable, nits) or {}
+    cod2id = {c.codigo: c.id for c in AsesoriaCatalogo.query.all()}
+    agregadas_total, sin_nit, sin_maestro = 0, [], []
+    for cli in activos:
+        nit = (cli.nit or "").strip()
+        if not nit:
+            sin_nit.append(cli.nombre)
+            continue
+        bruto = m.get(nit)
+        if not bruto:
+            sin_maestro.append(cli.nombre)
+            continue
+        datos = {cod2id[k]: v for k, v in bruto.items() if k in cod2id}
+        for aid in datos:
+            it = db.session.get(AsesoriaCatalogo, aid)
+            if not it or not it.activo:
+                continue
+            if it.tipo != "TODOS" and it.tipo != (cli.tipo or "PN"):
+                continue
+            x = AsesoriaCliente.query.filter_by(cliente_id=cli.id, asesoria_id=aid).first()
+            if x is None:
+                x = AsesoriaCliente(cliente_id=cli.id, asesoria_id=aid, incluir=True)
+                if it.es_fija:
+                    x.cantidad = max(1, datos[aid][0])
+                db.session.add(x)
+                agregadas_total += 1
+            elif not x.incluir:
+                x.incluir = True
+                if it.es_fija:
+                    x.cantidad = max(1, datos[aid][0])
+                agregadas_total += 1
+    db.session.commit()
+    flash("Masivo: %d asesoría(s) marcada(s) del maestro. Sin datos en maestro: %d cliente(s). Sin NIT: %d."
+          % (agregadas_total, len(sin_maestro), len(sin_nit)), "ok")
+    return redirect(url_for("main.clientes"))
+
 
 
 @bp.route("/clientes/<int:cid>/editar", methods=["GET", "POST"])
@@ -1792,6 +2245,144 @@ def clientes_importar():
 
 
 # ---------------- Parámetros / años ----------------
+def _asesorias_filas(cli, a):
+    """Filas de asesorias del cliente con PLATA REAL para el ano activo.
+    - Tarifas fijas: valor estandar (o editado) x cantidad.
+    - Porcentajes: pct estandar (o editado) x base; base = renta_base guardada
+      del cliente; si no hay, se deriva del presupuesto:
+      base = (presupuesto - suma(fijas incluidas)) / (suma(% incluidas) / 100).
+    Devuelve (filas, base_usada). Marca lo que viene del maestro."""
+    if not a:
+        return [], 0.0
+    from .maestro import leer_maestro
+    items = (AsesoriaCatalogo.query.filter(AsesoriaCatalogo.activo == True)
+             .order_by(AsesoriaCatalogo.orden, AsesoriaCatalogo.id).all())
+    guardadas = {x.asesoria_id: x for x in
+                 (AsesoriaCliente.query.join(AsesoriaCatalogo)
+                  .filter(AsesoriaCliente.cliente_id == cli.id).all())}
+    nit = (cli.nit or "").strip()
+    datos = {}
+    if nit:
+        m = leer_maestro(a.anio_cobro, a.anio_gravable, {nit})
+        bruto = (m or {}).get(nit, {})
+        cod2id = {c.codigo: c.id for c in AsesoriaCatalogo.query.all()}
+        datos = {cod2id[k]: v for k, v in bruto.items() if k in cod2id}
+    p = PresupuestoCliente.query.filter_by(cliente_id=cli.id, anio_cobro=a.anio_cobro).first()
+    presup = float(p.valor or 0) if p else 0.0
+
+    pre = []
+    sum_fijas = 0.0
+    sum_pct = 0.0
+    for it in items:
+        if it.tipo != "TODOS" and it.tipo != (cli.tipo or "PN"):
+            continue
+        x = guardadas.get(it.id)
+        sugerido = it.id in datos
+        incluir = bool(x.incluir) if x else sugerido
+        fija = bool(it.es_fija)
+        if fija:
+            val = x.valor if (x and x.valor is not None and x.valor > 0) \
+                else float(it.defecto_valor or 0)
+            cant = (x.cantidad if (x and x.cantidad) else None) or 1
+            sub = val * cant if incluir else 0.0
+            if incluir:
+                sum_fijas += sub
+            pre.append(dict(it=it, x=x, incluir=incluir, fija=True,
+                            eff_val=val, cant=cant, sub=sub, sugerido=sugerido))
+        else:
+            pct = x.pct if (x and x.pct is not None and x.pct > 0) \
+                else float(it.defecto_pct or 0)
+            if incluir:
+                sum_pct += pct
+            pre.append(dict(it=it, x=x, incluir=incluir, fija=False,
+                            eff_pct=pct, cant=None, sub=0.0, sugerido=sugerido))
+    base = float(cli.renta_base or 0)
+    if base <= 0 and sum_pct > 0:
+        base = max(0.0, (presup - sum_fijas) / (sum_pct / 100.0))
+    filas = []
+    for f in pre:
+        if not f["fija"]:
+            f["sub"] = round(f["eff_pct"] / 100.0 * base, 2) if (f["incluir"] and base > 0) else 0.0
+        d = datos.get(f["it"].id)
+        filas.append({
+            "it": f["it"], "incluir": f["incluir"], "fija": f["fija"],
+            "pct": (f["x"].pct if (f["x"] and f["x"].pct is not None) else None),
+            "valor": (f["x"].valor if (f["x"] and f["x"].valor is not None) else None),
+            "cantidad": (f["x"].cantidad if (f["x"] and f["x"].cantidad) else None),
+            "eff_pct": (f["eff_pct"] if not f["fija"] else None),
+            "eff_val": (f["eff_val"] if f["fija"] else None),
+            "base": (round(base) if (not f["fija"] and base > 0) else None),
+            "subtotal": f["sub"],
+            "en_maestro": f["it"].id in datos,
+            "estados": (d[1] if d else []),
+            "cant_maestro": (d[0] if d else 0),
+            "sugerido": f["sugerido"],
+            "nueva": bool(f["sugerido"] and (f["x"] is None or not f["x"].incluir)),
+        })
+    return filas, round(base)
+
+
+@bp.route("/asesorias", methods=["GET", "POST"])
+def asesorias():
+    """Catálogo estándar de asesorías (Parámetros → Asesorías)."""
+    if request.method == "POST":
+        f = request.form
+        try:
+            aid = int(f.get("id") or 0)
+        except ValueError:
+            aid = 0
+        it = db.session.get(AsesoriaCatalogo, aid) if aid else None
+        if not it:
+            return jsonify(ok=False, error="asesoria inexistente")
+        it.nombre = (f.get("nombre") or it.nombre).strip()[:120]
+        it.tipo = f.get("tipo") if f.get("tipo") in ("PN", "PJ", "TODOS") else it.tipo
+        try:
+            it.defecto_pct = float(f.get("pct") or 0)
+            it.defecto_valor = float(f.get("valor") or 0)
+        except ValueError:
+            pass
+        it.base_min = (f.get("base_min") or "").strip()[:60]
+        db.session.commit()
+        return jsonify(ok=True)
+    items = (AsesoriaCatalogo.query.order_by(AsesoriaCatalogo.orden, AsesoriaCatalogo.id).all())
+    return render_template("asesorias_catalogo.html", items=items)
+
+
+@bp.route("/clientes/<int:cid>/asesorias", methods=["POST"])
+def cliente_asesorias(cid):
+    """Guarda las asesorías del cliente (checkbox + % o valor por línea)."""
+    from flask import jsonify
+    cli = db.get_or_404(Cliente, cid)
+    aid = request.form.get("asesoria_id", type=int)
+    it = db.session.get(AsesoriaCatalogo, aid) if aid else None
+    if not it:
+        return jsonify(ok=False, error="asesoria inexistente")
+    x = AsesoriaCliente.query.filter_by(cliente_id=cid, asesoria_id=aid).first()
+    incluir = request.form.get("incluir") == "1"
+    if x is None:
+        x = AsesoriaCliente(cliente_id=cid, asesoria_id=aid)
+        db.session.add(x)
+    x.incluir = incluir
+    pct = (request.form.get("pct") or "").strip()
+    val = (request.form.get("valor") or "").strip()
+    x.pct = float(pct) if pct else None
+    x.valor = float(val) if val else None
+    cant = (request.form.get("cantidad") or "").strip()
+    if cant:
+        try:
+            x.cantidad = max(1, int(float(cant)))
+        except ValueError:
+            pass
+    elif it.es_fija and not x.cantidad:
+        x.cantidad = 1
+    db.session.commit()
+    # subtotal y total recalculados (plata real)
+    filas, _base = _asesorias_filas(cli, anio_actual())
+    total = sum(fx["subtotal"] for fx in filas)
+    sub = next((fx["subtotal"] for fx in filas if fx["it"].id == aid), 0)
+    return jsonify(ok=True, total=total, subtotal=sub)
+
+
 @bp.route("/parametros", methods=["GET", "POST"])
 def parametros():
     a = anio_actual()
@@ -1808,6 +2399,8 @@ def parametros():
             Parametro.set("ruta_casa", f.get("ruta_casa", ""))
         if "ruta_oficina" in f:
             Parametro.set("ruta_oficina", f.get("ruta_oficina", ""))
+        if "excel_cobros_anterior" in f:
+            Parametro.set("excel_cobros_anterior", f.get("excel_cobros_anterior", ""))
         if "banco_info" in f:
             Parametro.set("banco_info", f.get("banco_info", "").replace("\r\n", "\n"))
         if a:

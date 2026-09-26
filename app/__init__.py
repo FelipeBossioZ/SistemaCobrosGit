@@ -33,6 +33,9 @@ def create_app():
         from .migraciones import ejecutar as migrar
         migrar(db)
 
+        from .asesorias_seed import seed_asesorias
+        seed_asesorias()
+
     from .respaldos import respaldo_arranque
     respaldo_arranque(app)
 

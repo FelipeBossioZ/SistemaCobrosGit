@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Photo card — {{ cli.nombre }}</title>
+<style>
+  :root { --morado: #6d28d9; --borde: #e5e7eb; }
+  * { box-sizing: border-box; }
+  body { font-family: "Segoe UI", Arial, sans-serif; margin: 0; background: #f3f4f6; color: #111827; }
+  .wrap { max-width: 820px; margin: 24px auto; background: #fff; border: 1px solid var(--borde);
+          border-radius: 10px; padding: 28px 32px; }
+  .cab { display: flex; justify-content: space-between; align-items: flex-start;
+         border-bottom: 3px solid var(--morado); padding-bottom: 12px; margin-bottom: 16px; }
+  .emisor { font-weight: 700; font-size: 15px; color: var(--morado); }
+  .titulo { font-size: 20px; font-weight: 700; margin-top: 2px; }
+  .fecha { text-align: right; color: #6b7280; font-size: 13px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--morado);
+       margin: 22px 0 8px; }
+  .cliente { display: flex; flex-wrap: wrap; gap: 6px 28px; background: #faf5ff;
+             border: 1px solid #ddd6fe; border-radius: 8px; padding: 12px 16px; }
+  .cliente .nom { width: 100%; font-size: 17px; font-weight: 700; }
+  .cliente span { font-size: 13px; color: #4b5563; }
+  .cliente b { color: #111827; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { border-bottom: 1px solid var(--borde); padding: 8px 10px; text-align: left; }
+  th { background: var(--morado); color: #fff; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tfoot td { font-weight: 700; background: #f9fafb; }
+  .tot-final td { font-size: 16px; background: #ede9fe; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+  .b-verde { background: #dcfce7; color: #166534; }
+  .b-amarillo { background: #fef9c3; color: #854d0e; }
+  .b-rojo { background: #fee2e2; color: #991b1b; }
+  .nota { font-size: 12px; color: #6b7280; margin-top: 14px; }
+  .pie { margin-top: 22px; border-top: 1px solid var(--borde); padding-top: 10px;
+         font-size: 11px; color: #9ca3af; display: flex; justify-content: space-between; }
+  .acciones { max-width: 820px; margin: 0 auto 10px; text-align: right; }
+  button { background: var(--morado); color: #fff; border: 0; border-radius: 8px;
+           padding: 9px 18px; font-size: 14px; font-weight: 600; cursor: pointer; }
+  button:hover { background: #5b21b6; }
+  .vacio { color: #6b7280; font-style: italic; padding: 14px; text-align: center; }
+  @media print {
+    body { background: #fff; }
+    .wrap { border: 0; margin: 0; max-width: none; padding: 0; }
+    .acciones { display: none; }
+    th { background: var(--morado) !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+<div class="acciones"><button onclick="window.print()">🖨 Imprimir / Guardar PDF</button></div>
+<div class="wrap">
+  <div class="cab">
+    <div>
+      <div class="emisor">{{ emisor or "Oficina" }}</div>
+      <div class="titulo">Desglose de servicios y honorarios {{ a.anio_cobro if a }}</div>
+    </div>
+    <div class="fecha">{{ hoy.strftime("%d/%m/%Y") }}<br>Documento informativo</div>
+  </div>
+
+  <h2>Cliente</h2>
+  <div class="cliente">
+    <div class="nom">{{ cli.nombre }}</div>
+    <span>Código: <b>{{ cli.codigo }}</b></span>
+    <span>{{ "NIT" if cli.tipo == "PJ" else "C.C." }}: <b>{{ cli.nit_formateado }}{% if cli.dv %}-{{ cli.dv }}{% endif %}</b></span>
+    <span>Tipo: <b>{{ cli.tipo }}</b></span>
+    {% if cli.grupo %}<span>Grupo: <b>{{ cli.grupo.nombre }}</b></span>{% endif %}
+    <span>Renta: <b>{{ {"": "sin dato", "NO_OBLIGADO": "no obligado", "PRESENTADA": "presentada"}[cli.decl_renta] }}</b></span>
+  </div>
+
+  <h2>Servicios incluidos {{ a.anio_cobro if a }}</h2>
+  {% if filas %}
+  <table>
+    <thead><tr><th>#</th><th>Servicio</th><th class="num">Tarifa</th><th class="num">Cant.</th><th class="num">Subtotal</th></tr></thead>
+    <tbody>
+    {% for f in filas %}
+      <tr>
+        <td>{{ loop.index }}</td>
+        <td>{{ f.it.nombre }}{% if f.it.base_min %} <span style="color:#9ca3af; font-size:12px;">({{ f.it.base_min }})</span>{% endif %}</td>
+        <td class="num">{% if f.fija %}{{ (f.valor if f.valor is not none else f.it.defecto_valor)|money }}{% else %}{{ "%g"|format(f.eff_pct) }}%{% if f.base %} <span style="color:#9ca3af; font-size:12px;">de {{ f.base|money }}</span>{% endif %}{% endif %}</td>
+        <td class="num">{% if f.fija %}{{ f.cantidad or 1 }}{% else %}·{% endif %}</td>
+        <td class="num">{{ f.subtotal|money }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+    <tfoot>
+      <tr class="tot-final"><td colspan="4" style="text-align:right;">Total {{ a.anio_cobro if a }}</td><td class="num">{{ total|money }}</td></tr>
+      {% if presup %}
+      <tr><td colspan="4" style="text-align:right;">Presupuesto acordado</td><td class="num">{{ presup|money }}</td></tr>
+      <tr><td colspan="4" style="text-align:right;">Diferencia</td><td class="num">
+        {% set d = total - presup %}
+        {% if d > 1000 %}<span class="badge b-rojo">se pasa {{ d|money }}</span>
+        {% elif d < -1000 %}<span class="badge b-amarillo">falta {{ (d * -1)|money }}</span>
+        {% else %}<span class="badge b-verde">= presupuesto</span>{% endif %}
+      </td></tr>
+      {% endif %}
+    </tfoot>
+  </table>
+  {% else %}
+  <div class="vacio">Sin servicios marcados para {{ a.anio_cobro if a }}.{% if excluidas %} ({{ excluidas }} sin marcar en la ficha).{% endif %}</div>
+  {% endif %}
+
+{% if hay_maestro %}
+<div style="margin-top:8px; font-size:12.5px; color:#065f46; background:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px; padding:8px 10px;">
+  <b>Auditado con el Sistema Maestro:</b> los servicios con nube son obligaciones presentadas seg&uacute;n el maestro.
+</div>
+{% endif %}
+
+  {% if trabajos %}
+  <h2>Trabajos adicionales (fuera del presupuesto)</h2>
+  <table>
+    <thead><tr><th>Fecha</th><th>Descripción</th><th class="num">Valor</th><th>Estado</th></tr></thead>
+    <tbody>
+    {% for t in trabajos %}
+      <tr><td>{{ t.fecha.strftime("%d/%m/%Y") if t.fecha }}</td><td>{{ t.descripcion }}</td><td class="num">{{ t.valor|money }}</td><td>{{ t.estado or "" }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  <div class="nota">Este documento resume los servicios que la oficina tiene registrados para el cliente en el año indicado.
+  Los porcentajes corresponden al estándar de honorarios acordado. Cualquier ajuste se refleja previa acuerdo entre las partes.</div>
+
+  <div class="pie">
+    <span>Generado por el Sistema de Cobros — {{ hoy.strftime("%d/%m/%Y %H:%M") }}</span>
+    <span>Uso interno; entregar solo si el cliente lo solicita</span>
+  </div>
+</div>
+</body>
+</html>

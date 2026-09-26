@@ -2376,11 +2376,130 @@ def cliente_asesorias(cid):
     elif it.es_fija and not x.cantidad:
         x.cantidad = 1
     db.session.commit()
-    # subtotal y total recalculados (plata real)
-    filas, _base = _asesorias_filas(cli, anio_actual())
-    total = sum(fx["subtotal"] for fx in filas)
-    sub = next((fx["subtotal"] for fx in filas if fx["it"].id == aid), 0)
-    return jsonify(ok=True, total=total, subtotal=sub)
+    # Python es la unica calculadora: se devuelve el estado completo autoritativo
+    return jsonify(ok=True, **_estado_asesorias(cli, anio_actual()))
+
+
+def _estado_asesorias(cli, a):
+    """Snapshot autoritativo del paquete del cliente. TODA la matematica vive aqui
+    (Python); el front solo pinta. Base, subtotales, total, sobra y confirmacion."""
+    filas, base = _asesorias_filas(cli, a)
+    presup = 0.0
+    if a:
+        p = PresupuestoCliente.query.filter_by(cliente_id=cli.id, anio_cobro=a.anio_cobro).first()
+        presup = float(p.valor or 0) if p else 0.0
+    total = sum(f["subtotal"] for f in filas)
+    delta = presup - total
+    if presup <= 0:
+        sobra = None
+    elif delta > 1000:
+        sobra = ["falta", round(delta)]
+    elif delta < -1000:
+        sobra = ["pasa", round(-delta)]
+    else:
+        sobra = ["ok", 0]
+    from .maestro import bd_maestro
+    confirmado = bool(a and db.session.query(PresupuestoHistorial.id)
+                      .filter_by(cliente_id=cli.id, anio_cobro=a.anio_cobro).first())
+    return {
+        "base": float(base or 0),
+        "presup": presup,
+        "total": round(float(total)),
+        "sobra": sobra,
+        "maestro_ok": bool(bd_maestro()),
+        "confirmado": confirmado,
+        "filas": [{"id": f["it"].id, "incluir": bool(f["incluir"]), "fija": bool(f["fija"]),
+                   "pct": f["pct"], "valor": f["valor"], "cantidad": f["cantidad"],
+                   "sub": round(float(f["subtotal"] or 0)),
+                   "en_maestro": bool(f["en_maestro"])} for f in filas],
+    }
+
+
+@bp.route("/clientes/<int:cid>/asesorias-estado", methods=["GET"])
+def cliente_asesorias_estado(cid):
+    """Estado autoritativo del paquete (la pantalla pinta lo que esto responde)."""
+    from flask import jsonify
+    cli = db.get_or_404(Cliente, cid)
+    return jsonify(ok=True, **_estado_asesorias(cli, anio_actual()))
+
+
+@bp.route("/clientes/<int:cid>/asesorias-recalcular", methods=["POST"])
+def cliente_asesorias_recalcular(cid):
+    """Recalcula la renta base para que el paquete cuadre con el presupuesto
+    (fijas primero, la base absorbe el resto). Python calcula, el front pinta."""
+    from flask import jsonify
+    cli = db.get_or_404(Cliente, cid)
+    a = anio_actual()
+    if not a:
+        return jsonify(ok=False, error="No hay año activo")
+    filas, _base = _asesorias_filas(cli, a)
+    p = PresupuestoCliente.query.filter_by(cliente_id=cli.id, anio_cobro=a.anio_cobro).first()
+    presup = float(p.valor or 0) if p else 0.0
+    fijas = sum(f["subtotal"] for f in filas if f["incluir"] and f["fija"])
+    sumpct = sum((f["eff_pct"] or 0) for f in filas if f["incluir"] and not f["fija"])
+    if sumpct > 0 and presup > 0:
+        nueva = max(0.0, round((presup - fijas) / (sumpct / 100.0), 2))
+        cli.renta_base = nueva
+        db.session.commit()
+    return jsonify(ok=True, base_ajustada=True, **_estado_asesorias(cli, a))
+
+
+@bp.route("/clientes/<int:cid>/paquete-calc", methods=["POST"])
+def cliente_paquete_calc(cid):
+    """Calculadora PURA del paquete (ficha y modal): base + marcas -> subtotales
+    y total. NO escribe nada en la BD; sirve de vista previa en vivo."""
+    import json as _json
+    from flask import jsonify
+    cli = db.get_or_404(Cliente, cid)
+    a = anio_actual()
+    if not a:
+        return jsonify(ok=False, error="No hay año activo")
+    try:
+        base = float(request.form.get("base") or 0)
+    except (TypeError, ValueError):
+        base = 0.0
+    try:
+        marcas = {int(m.get("id")): m for m in _json.loads(request.form.get("marcas") or "[]")
+                  if isinstance(m, dict) and m.get("id")}
+    except (TypeError, ValueError):
+        marcas = {}
+    items = (AsesoriaCatalogo.query.filter(AsesoriaCatalogo.activo == True)
+             .order_by(AsesoriaCatalogo.orden, AsesoriaCatalogo.id).all())
+    salida, total = [], 0.0
+    for it in items:
+        if it.tipo != "TODOS" and it.tipo != (cli.tipo or "PN"):
+            continue
+        m = marcas.get(it.id)
+        if m is None or not m.get("incluir"):
+            salida.append({"id": it.id, "sub": 0.0})
+            continue
+        if it.es_fija:
+            val = 0.0
+            if m.get("valor") not in (None, ""):
+                try:
+                    val = float(m.get("valor"))
+                except (TypeError, ValueError):
+                    val = 0.0
+            if val <= 0:
+                val = float(it.defecto_valor or 0)
+            try:
+                cant = max(1, int(float(m.get("cantidad") or 1)))
+            except (TypeError, ValueError):
+                cant = 1
+            sub = val * cant
+        else:
+            pct = 0.0
+            if m.get("pct") not in (None, ""):
+                try:
+                    pct = float(m.get("pct"))
+                except (TypeError, ValueError):
+                    pct = 0.0
+            if pct <= 0:
+                pct = float(it.defecto_pct or 0)
+            sub = pct / 100.0 * base
+        salida.append({"id": it.id, "sub": round(sub, 2)})
+        total += sub
+    return jsonify(ok=True, filas=salida, total=round(float(total)))
 
 
 @bp.route("/parametros", methods=["GET", "POST"])

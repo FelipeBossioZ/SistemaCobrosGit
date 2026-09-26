@@ -206,7 +206,7 @@
             <input class="form-control" type="number" step="10000" min="0" id="paq-base" style="width: 180px;">
           </div>
           <div class="col">
-            <div class="small text-muted">Digita solo la <b>base</b>: el total se calcula solo
+            <div class="small text-muted">Digita solo la <b>base</b>: el total lo calcula el sistema
               (base × % marcados + tarifas fijas × cantidad). Aquí decides las marcas del paquete.</div>
           </div>
         </div>
@@ -276,7 +276,19 @@
 </div>
 <script type="application/json" id="datos-asesorias">{{ datos_asesorias|safe }}</script>
 <script>
+/* La ficha NO calcula: solo envia cambios y pinta lo que responde Python.
+   Matematica autoritativa: /asesorias-estado, /asesorias, /asesorias-recalcular,
+   /paquete-calc (todas en el servidor). */
 (function () {
+  const datos = JSON.parse(document.getElementById("datos-asesorias").textContent);
+  const CID = location.pathname.split("/")[2];
+  let E = { base: datos.base, presup: datos.presup, total: null, sobra: null,
+            filas: datos.filas.map(f => ({ id: f.id, incluir: f.incluir, fija: f.fija,
+                                           pct: f.pct, valor: f.valor, cantidad: f.cantidad,
+                                           sub: null, en_maestro: f.en_maestro })) };
+  let editando = false;
+
+  function money(n) { return "$ " + (Math.round(n) || 0).toLocaleString("es-CO"); }
   function toast(msg, ok) {
     const el = document.getElementById("toastFicha");
     document.getElementById("toastFichaBody").textContent = msg;
@@ -285,150 +297,122 @@
     el.classList.add("text-white");
     bootstrap.Toast.getOrCreateInstance(el, { delay: 7000 }).show();
   }
-  const datos = JSON.parse(document.getElementById("datos-asesorias").textContent);
-  const tfoot = document.querySelector("tfoot[data-presup]");
-  let baseActual = Number(tfoot.dataset.base || 0);
-  const presup = Number(tfoot.dataset.presup || 0);
-  let pendiente = false; // hay cambios sin recalcular
+  function filaDom(id) { return document.querySelector('tr[data-ac="' + id + '"]'); }
+  function estadoDe(id) { return E.filas.find(f => f.id === Number(id)); }
 
-  function filas() { return Array.from(document.querySelectorAll("tr[data-ac]")); }
-
-  function calcFila(tr) {
-    const inc = tr.querySelector(".ac-incluir").checked;
-    const cantIn = tr.querySelector(".ac-cant");
-    const esFija = !!cantIn;
-    let sub = 0;
-    if (inc) {
-      if (esFija) {
-        const vi = tr.querySelector(".ac-val");
-        const val = Number(vi.value || vi.placeholder || 0);
-        sub = val * Number(cantIn.value || 1);
-      } else {
-        const pi = tr.querySelector(".ac-pct");
-        const pct = Number(pi.value || pi.placeholder || 0);
-        sub = pct / 100 * baseActual;
+  /* Pinta TODO desde el estado que entrega Python. */
+  function pintar() {
+    E.filas.forEach(f => {
+      const tr = filaDom(f.id);
+      if (!tr) return;
+      const st = estadoDe(f.id) || {};
+      const inc = (st.incluir !== undefined) ? st.incluir : f.incluir;
+      tr.querySelector(".ac-incluir").checked = !!inc;
+      const pi = tr.querySelector(".ac-pct"), vi = tr.querySelector(".ac-val");
+      if (!editando) {
+        if (pi) pi.value = (st.pct != null ? st.pct : "");
+        if (vi) vi.value = (st.valor != null ? Math.round(st.valor) : "");
+      }
+      const ci = tr.querySelector(".ac-cant");
+      if (ci) ci.value = (st.cantidad != null ? st.cantidad : 1);
+      const sub = (st.sub != null) ? st.sub : f.sub;
+      tr.querySelector(".ac-sub").textContent = (sub && sub > 0) ? money(sub) : "\u00b7";
+      tr.classList.toggle("table-light", !inc);
+      tr.classList.toggle("text-muted", !inc);
+    });
+    if (E.base != null) document.getElementById("ases-base").textContent = money(E.base);
+    if (E.presup != null) document.getElementById("ases-presup").textContent = E.presup ? money(E.presup) : "";
+    if (E.total != null) {
+      document.getElementById("ases-total").textContent = money(E.total);
+      const dif = document.getElementById("ases-dif");
+      if (dif && E.presup > 0) {
+        const d = E.total - E.presup;
+        if (d > 1000) dif.innerHTML = '<span class="badge text-bg-danger">se pasa ' + money(d) + '</span>';
+        else if (d < -1000) dif.innerHTML = '<span class="badge text-bg-warning">falta ' + money(-d) + '</span>';
+        else dif.innerHTML = '<span class="badge text-bg-success">= presupuesto</span>';
+      }
+      const sobra = document.getElementById("ases-sobra");
+      if (sobra) {
+        if (E.sobra && E.sobra[0] === "falta") sobra.innerHTML = '<span class="text-warning">Quedan ' + money(E.sobra[1]) + ' del presupuesto sin marcar</span>';
+        else if (E.sobra && E.sobra[0] === "pasa") sobra.innerHTML = '<span class="text-danger">Las marcas se pasan ' + money(E.sobra[1]) + ' del presupuesto</span>';
+        else sobra.textContent = "";
       }
     }
-    return { inc: inc, esFija: esFija, sub: sub };
   }
 
-  function recalcVista() {
-    let total = 0;
-    filas().forEach(tr => {
-      const c = calcFila(tr);
-      tr.querySelector(".ac-sub").textContent = c.sub > 0 ? moneyCO(Math.round(c.sub)) : "\u00b7";
-      total += c.sub;
-    });
-    total = Math.round(total);
-    const tot = document.getElementById("ases-total");
-    if (tot) tot.textContent = moneyCO(total);
-    const dif = document.getElementById("ases-dif");
-    if (dif && presup > 0) {
-      const d = total - presup;
-      if (d > 1000) dif.innerHTML = '<span class="badge text-bg-danger">se pasa ' + moneyCO(d) + '</span>';
-      else if (d < -1000) dif.innerHTML = '<span class="badge text-bg-warning">falta ' + moneyCO(-d) + '</span>';
-      else dif.innerHTML = '<span class="badge text-bg-success">= presupuesto</span>';
-    }
-    const sobra = document.getElementById("ases-sobra");
-    if (sobra && presup > 0) {
-      const delta = presup - total;
-      if (delta > 1000) sobra.innerHTML = '<span class="text-warning">Quedan ' + moneyCO(delta) + ' del presupuesto sin marcar</span>';
-      else if (delta < -1000) sobra.innerHTML = '<span class="text-danger">Las marcas se pasan ' + moneyCO(-delta) + ' del presupuesto</span>';
-      else sobra.textContent = "";
-    }
-    return total;
+  function adoptar(j) { if (j && j.ok) { E = j; pintar(); } }
+
+  function guardarFila(tr) {
+    const body = new FormData();
+    body.append("asesoria_id", tr.dataset.ac);
+    body.append("incluir", tr.querySelector(".ac-incluir").checked ? "1" : "0");
+    const pi = tr.querySelector(".ac-pct"), vi = tr.querySelector(".ac-val");
+    if (pi) body.append("pct", pi.value);
+    if (vi) body.append("valor", vi.value);
+    const ci = tr.querySelector(".ac-cant");
+    if (ci) body.append("cantidad", ci.value);
+    return fetch(location.pathname + "/asesorias", { method: "POST", body })
+      .then(r => r.json()).then(adoptar).catch(() => toast("No pude guardar el cambio", false));
   }
 
-  // marcas/cantidades: marcan pendiente de recalcular
   document.addEventListener("change", e => {
     const t = e.target;
     const tr = t.closest && t.closest("tr[data-ac]");
-    if (tr && (t.classList.contains("ac-incluir") || t.classList.contains("ac-cant"))) {
-      pendiente = true;
-      recalcVista();
-    }
+    if (tr && (t.classList.contains("ac-incluir") || t.classList.contains("ac-cant"))) guardarFila(tr);
   });
 
-  // ---- bloqueo de la columna % / valor con lapiz ----
-  const btnEdit = document.getElementById("ac-edit");
-  const btnOk = document.getElementById("ac-ok");
-  const btnX = document.getElementById("ac-x");
-  const originales = new Map();
+  /* ---- lapiz: % / valores ---- */
+  const btnEdit = document.getElementById("ac-edit"), btnOk = document.getElementById("ac-ok"), btnX = document.getElementById("ac-x");
   function inputsValor() {
-    return filas().map(tr => tr.querySelector(".ac-pct") || tr.querySelector(".ac-val")).filter(Boolean);
-  }
-  function cambiosValor() {
-    return inputsValor().some(i => originales.has(i) && i.value !== originales.get(i));
-  }
-  function bloquear() {
-    inputsValor().forEach(i => { i.disabled = true; });
-    originales.clear();
-    btnEdit.style.display = ""; btnOk.style.display = "none"; btnX.style.display = "none";
-    document.getElementById("ac-editbar").style.display = "none";
+    return Array.from(document.querySelectorAll("tr[data-ac]")).map(tr => tr.querySelector(".ac-pct") || tr.querySelector(".ac-val")).filter(Boolean);
   }
   btnEdit.addEventListener("click", () => {
-    inputsValor().forEach(i => { originales.set(i, i.value); i.disabled = false; });
+    editando = true;
+    inputsValor().forEach(i => { i.disabled = false; });
     btnEdit.style.display = "none"; btnOk.style.display = ""; btnX.style.display = "";
     document.getElementById("ac-editbar").style.display = "";
   });
-  function guardarFilasEditadas() {
-    filas().forEach(tr => {
-      const pi = tr.querySelector(".ac-pct"), vi = tr.querySelector(".ac-val");
-      const inp = pi || vi;
-      if (!inp || !originales.has(inp) || inp.value === originales.get(inp)) return;
-      const body = new FormData();
-      body.append("asesoria_id", tr.dataset.ac);
-      body.append("incluir", tr.querySelector(".ac-incluir").checked ? "1" : "0");
-      if (pi) body.append("pct", pi.value);
-      if (vi) body.append("valor", vi.value);
-      const c = tr.querySelector(".ac-cant");
-      if (c) body.append("cantidad", c.value);
-      fetch(location.pathname + "/asesorias", { method: "POST", body }).catch(() => {});
-    });
+  function cerrarEdicion() {
+    editando = false;
+    inputsValor().forEach(i => { i.disabled = true; });
+    btnEdit.style.display = ""; btnOk.style.display = "none"; btnX.style.display = "none";
+    document.getElementById("ac-editbar").style.display = "none";
   }
   btnOk.addEventListener("click", () => {
-    if (!cambiosValor()) { bloquear(); return; }
-    if (confirm("\u00bfGuardar los cambios de % y valores?")) {
-      guardarFilasEditadas();
-      pendiente = true;
-      bloquear();
-      toast("Cambios aplicados: pulsa Recalcular y luego Guardar", false);
-    }
+    const filas = Array.from(document.querySelectorAll("tr[data-ac]"));
+    const cadenas = [];
+    filas.forEach(tr => {
+      const pi = tr.querySelector(".ac-pct"), vi = tr.querySelector(".ac-val");
+      if (!pi && !vi) return;
+      const st = estadoDe(tr.dataset.ac) || {};
+      const cambio = pi ? (String(st.pct != null ? st.pct : "") !== pi.value)
+                        : (String(st.valor != null ? Math.round(st.valor) : "") !== vi.value);
+      if (cambio) cadenas.push(() => guardarFila(tr));
+    });
+    if (!cadenas.length) { cerrarEdicion(); pintar(); return; }
+    if (!confirm("\u00bfGuardar los cambios de % y valores?")) return;
+    cadenas.reduce((p, fn) => p.then(fn), Promise.resolve())
+      .then(() => { cerrarEdicion(); toast("Cambios guardados por el servidor", true); });
   });
   btnX.addEventListener("click", () => {
-    if (!cambiosValor()) { bloquear(); return; }
-    if (confirm("\u00bfCancelar los cambios sin guardar?")) {
-      originales.forEach((v, i) => { i.value = v; });
-      bloquear();
-      recalcVista();
-    }
+    if (!confirm("\u00bfCancelar los cambios sin guardar?")) return;
+    cerrarEdicion();
+    fetch(location.pathname + "/asesorias-estado").then(r => r.json()).then(j => { adoptar(j); toast("Cambios cancelados", true); });
   });
 
-  // ---- recalcular (obligatorio antes de guardar) ----
+  /* ---- recalcular: Python ajusta la base ---- */
   document.getElementById("btn-recalcular").addEventListener("click", () => {
-    let fijas = 0, sumpct = 0;
-    filas().forEach(tr => {
-      const c = calcFila(tr);
-      if (!c.inc) return;
-      if (c.esFija) fijas += c.sub;
-      else {
-        const pi = tr.querySelector(".ac-pct");
-        sumpct += Number(pi.value || pi.placeholder || 0);
-      }
-    });
-    if (sumpct > 0) {
-      baseActual = Math.max(0, Math.round((presup - fijas) / (sumpct / 100)));
-      document.getElementById("ases-base").innerHTML =
-        moneyCO(baseActual) + ' <span class="badge text-bg-info">ajustada</span>';
-      toast("Base ajustada a " + moneyCO(baseActual) + " para cuadrar con el presupuesto", true);
-    } else {
-      toast("No hay asesorías en % marcadas: la base no cambia. Total de fijas: " + moneyCO(Math.round(fijas)), false);
-    }
-    pendiente = false;
-    recalcVista();
+    const b = document.getElementById("btn-recalcular");
+    b.disabled = true;
+    fetch(location.pathname + "/asesorias-recalcular", { method: "POST" })
+      .then(r => r.json()).then(j => {
+        b.disabled = false;
+        if (j.ok) { adoptar(j); document.getElementById("ases-base").innerHTML = money(E.base) + ' <span class="badge text-bg-info">ajustada</span>'; toast("Base ajustada a " + money(E.base) + " para cuadrar con el presupuesto", true); }
+        else toast(j.error || "No se pudo recalcular", false);
+      }).catch(() => { b.disabled = false; });
   });
 
-  // ---- traer del maestro ----
+  /* ---- traer del maestro / revertir ---- */
   const btnTraer = document.getElementById("btn-traer");
   btnTraer.addEventListener("click", () => {
     btnTraer.disabled = true;
@@ -437,8 +421,6 @@
       .catch(() => toast("No pude leer el maestro", false))
       .finally(() => { btnTraer.disabled = false; });
   });
-
-  // ---- revertir al maestro ----
   const btnRev = document.getElementById("btn-revertir");
   btnRev.addEventListener("click", () => {
     if (!confirm("Volver las marcas a lo que trae el Sistema Maestro? Se borran las marcas manuales y los % / valores vuelven al estandar.")) return;
@@ -448,12 +430,9 @@
       .catch(() => { btnRev.disabled = false; });
   });
 
-  // ---- guardar / confirmar (nunca toca el presupuesto) ----
+  /* ---- guardar / confirmar ---- */
   const btnConf = document.getElementById("btn-confirmar");
-  btnConf.addEventListener("click", () => {
-    if (pendiente) { toast("Hay cambios sin recalcular: pulsa Recalcular antes de Guardar", false); return; }
-    pedirNota(null);
-  });
+  btnConf.addEventListener("click", () => pedirNota(null));
   function pedirNota(aviso) {
     const av = document.getElementById("nota-aviso");
     if (aviso) { av.textContent = aviso; av.classList.remove("d-none"); } else { av.classList.add("d-none"); }
@@ -467,17 +446,15 @@
     fetch(location.pathname + "/asesorias-confirmar", { method: "POST", body })
       .then(r => r.json()).then(j => {
         if (j.ok) { toast(j.mensaje, true); setTimeout(() => location.reload(), 1800); }
-        else if (j.requiere_recalculo) {
-          bootstrap.Modal.getInstance(document.getElementById("modalNota")).hide();
-          toast(j.error, false);
-        }
+        else if (j.requiere_recalculo) { bootstrap.Modal.getInstance(document.getElementById("modalNota")).hide(); toast(j.error, false); }
         else if (j.pide_nota) { bootstrap.Modal.getInstance(document.getElementById("modalNota")).hide(); pedirNota(j.error); }
         else toast(j.error, false);
       }).catch(() => toast("Error de red al confirmar", false));
   });
 
-  // ---- modal: construir presupuesto desde la base ----
+  /* ---- modal: construir desde la base (calculo en Python) ---- */
   const paqBody = document.getElementById("paq-body");
+  let paqTimer = null;
   function nombreFila(f) {
     let h = f.nombre;
     if (f.base_min) h += ' <span class="text-muted small">(' + f.base_min + ')</span>';
@@ -500,69 +477,59 @@
         '<td class="num fw-semibold" id="paq-sub-' + f.id + '">\u00b7</td></tr>';
     }).join("");
   }
-  function calcPaq() {
-    const base = Number(document.getElementById("paq-base").value || 0);
-    let total = 0;
-    datos.filas.forEach(f => {
-      const inc = document.getElementById("paq-inc-" + f.id).checked;
-      const subEl = document.getElementById("paq-sub-" + f.id);
-      let sub = 0;
-      if (inc) {
-        if (f.fija) {
-          const val = Number(document.getElementById("paq-in-" + f.id).value || 0);
-          const cant = Number(document.getElementById("paq-cant-" + f.id).value || 1);
-          sub = val * cant;
-        } else {
-          const pct = Number(document.getElementById("paq-in-" + f.id).value || 0);
-          sub = pct / 100 * base;
-        }
-      }
-      subEl.textContent = sub > 0 ? moneyCO(Math.round(sub)) : "\u00b7";
-      total += sub;
+  function marcasPaq() {
+    return datos.filas.map(f => {
+      const o = { id: f.id, incluir: document.getElementById("paq-inc-" + f.id).checked };
+      if (f.fija) { o.valor = document.getElementById("paq-in-" + f.id).value; o.cantidad = document.getElementById("paq-cant-" + f.id).value; }
+      else o.pct = document.getElementById("paq-in-" + f.id).value;
+      return o;
     });
-    return Math.round(total);
   }
-  function actualizarPaq() {
-    const total = calcPaq();
-    document.getElementById("paq-total").textContent = moneyCO(total);
-    const lbl = document.getElementById("paq-dif");
-    if (presup > 0 && Math.abs(total - presup) <= 1000) lbl.innerHTML = '<span class="badge text-bg-success">= presupuesto actual</span>';
-    else if (total > presup) lbl.innerHTML = '<span class="text-danger small">sube ' + moneyCO(total - presup) + '</span>';
-    else lbl.innerHTML = '<span class="text-warning small">baja ' + moneyCO(presup - total) + '</span>';
+  function calcPaq() {
+    const body = new FormData();
+    body.append("base", document.getElementById("paq-base").value || "0");
+    body.append("marcas", JSON.stringify(marcasPaq()));
+    return fetch(location.pathname + "/paquete-calc", { method: "POST", body })
+      .then(r => r.json()).then(j => {
+        if (!j.ok) return;
+        j.filas.forEach(fr => {
+          const el = document.getElementById("paq-sub-" + fr.id);
+          if (el) el.textContent = fr.sub > 0 ? money(fr.sub) : "\u00b7";
+        });
+        document.getElementById("paq-total").textContent = money(j.total);
+        const lbl = document.getElementById("paq-dif");
+        if (datos.presup > 0 && Math.abs(j.total - datos.presup) <= 1000) lbl.innerHTML = '<span class="badge text-bg-success">= presupuesto actual</span>';
+        else if (j.total > datos.presup) lbl.innerHTML = '<span class="text-danger small">sube ' + money(j.total - datos.presup) + '</span>';
+        else lbl.innerHTML = '<span class="text-warning small">baja ' + money(datos.presup - j.total) + '</span>';
+      }).catch(() => {});
   }
+  function agendaCalc() { clearTimeout(paqTimer); paqTimer = setTimeout(calcPaq, 200); }
   document.getElementById("modalPaquete").addEventListener("shown.bs.modal", () => {
     if (!paqBody.innerHTML) renderPaq();
-    document.getElementById("paq-base").value = baseActual ? Math.round(baseActual) : "";
-    actualizarPaq();
+    document.getElementById("paq-base").value = E.base ? Math.round(E.base) : "";
+    calcPaq();
   });
-  paqBody.addEventListener("input", e => {
-    if (e.target.classList.contains("paq-in")) actualizarPaq();
-  });
+  paqBody.addEventListener("input", e => { if (e.target.classList.contains("paq-in")) agendaCalc(); });
   paqBody.addEventListener("change", e => {
     if (e.target.classList.contains("paq-chk")) {
       const tr = e.target.closest("tr[data-paq]");
       tr.classList.toggle("table-light", !e.target.checked);
       tr.classList.toggle("text-muted", !e.target.checked);
-      actualizarPaq();
+      agendaCalc();
     }
   });
-  document.getElementById("paq-base").addEventListener("input", actualizarPaq);
+  document.getElementById("paq-base").addEventListener("input", agendaCalc);
   document.getElementById("paq-guardar").addEventListener("click", () => {
     const btn = document.getElementById("paq-guardar");
     const res = document.getElementById("paq-res");
-    const base = Number(document.getElementById("paq-base").value || 0);
-    if (!base || base <= 0) { res.innerHTML = '<span class="text-danger">Digita la base de renta (mayor que cero).</span>'; return; }
+    const base = document.getElementById("paq-base").value;
+    if (!base || Number(base) <= 0) { res.innerHTML = '<span class="text-danger">Digita la base de renta (mayor que cero).</span>'; return; }
     btn.disabled = true;
     const body = new FormData();
-    body.append("base", String(base));
+    body.append("base", base);
     body.append("motivo", document.getElementById("paq-motivo").value.trim());
     body.append("aplicar_marcas", "1");
-    body.append("marcas", JSON.stringify(datos.filas.map(f => {
-      const o = { id: f.id, incluir: document.getElementById("paq-inc-" + f.id).checked };
-      if (f.fija) { o.valor = document.getElementById("paq-in-" + f.id).value; o.cantidad = document.getElementById("paq-cant-" + f.id).value; }
-      else o.pct = document.getElementById("paq-in-" + f.id).value;
-      return o;
-    })));
+    body.append("marcas", JSON.stringify(marcasPaq()));
     fetch(location.pathname + "/presupuesto-paquete", { method: "POST", body })
       .then(r => r.json()).then(j => {
         btn.disabled = false;
@@ -572,8 +539,6 @@
         setTimeout(() => location.reload(), 1800);
       }).catch(() => { btn.disabled = false; res.innerHTML = '<span class="text-danger">Error de red.</span>'; });
   });
-
-  recalcVista();
 })();
 </script>
 {% endblock %}

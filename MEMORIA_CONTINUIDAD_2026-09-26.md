@@ -103,6 +103,14 @@ Decisiones de Felipe (cerradas): 1) el presupuesto NUNCA se digita: se construye
 3. Regla "renta pendiente = aviso amarillo" en la ficha (la data del maestro ya distingue PRESENTADA de pendiente; falta pintar el aviso).
 4. Felipe debe PROBAR el paquete en el 777 y aprobar para pasar a produccion.
 
+## 4e. DESPLIEGUE A PRODUCCION (26/09 ~12:15, commit prod c2e83bf)
+- Estrategia: SOLO app/ viajo (git checkout origin/pruebas777 -- app/ en el repo de produccion). Las BDs NO viajan: cada instalacion conserva la suya (pruebas quedo con data de prueba; produccion con asesorias_cliente y presupuesto_historial en 0).
+- Respaldo previo: Respaldos BD/cobros_antes_motor_2026-09-26.db (110 KB).
+- Verificaciones pre-despliegue: anios_cobro de produccion ya tenia numero_siguiente=13 y anio_gravable=2025 (el '1' visto era la col activo); MAX(numero) cuentas_cobro=23 (el codigo nuevo salta numeros usados, self-healing; no se tocaron datos).
+- Migracion corrio via create_app (sin servidor): tablas asesorias_catalogo/asesorias_cliente/presupuesto_historial creadas, 22 items sembrados CON bases (IVA 150k, CONSUMO 100k, ANTICIPO 100k, RF 100k, CONT_PN 600k mensual). Smoke test: / /clientes /asesorias /parametros /clientes/1 -> 200.
+- Push a origin/produccion OK (c7ace5b -> c2e83bf). PC OFICINA: al sincronizar OneDrive llega el .git; solo git pull (o nada, el working tree ya esta actualizado) + iniciar.bat.
+- Pendiente verificacion de Felipe: abrir produccion con iniciar.bat, revisar ficha de un cliente real y el boton 'Construir desde la base'.
+
 ## 5. PREGUNTAS ABIERTAS (las respuestas llegan por chat)
 Q1 renta base: ¿guardar al confirmar (recomendado, auditable) o derivar en vivo?
 Q2 sin match en maestro: se marca y se lista (propuesto y aceptado en linea general: color + nota visible).

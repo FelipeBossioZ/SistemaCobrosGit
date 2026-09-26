@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="text-center py-5">
+  <h3>No hay ningún año de cobro configurado</h3>
+  <p class="text-muted">Crea el año (ej. 2026, gravable 2025, prefijo 26) o importa el Excel para empezar.</p>
+  <a class="btn btn-primary" href="{{ url_for('main.anios') }}">Ir a Años</a>
+  <a class="btn btn-outline-primary ms-2" href="{{ url_for('main.importar') }}">Importar Excel</a>
+</div>
+{% endblock %}

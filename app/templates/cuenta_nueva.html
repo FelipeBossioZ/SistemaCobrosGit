@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+{% block title %}Nueva cuenta de cobro{% endblock %}
+{% block extra_head %}
+<style>
+  .picker-row { cursor: pointer; }
+  .picker-row.selected { background: #ede9fe; }
+  #tablaLineas td { vertical-align: middle; }
+</style>
+{% endblock %}
+{% block content %}
+<h3 class="mb-1">Nueva cuenta de cobro</h3>
+<p class="text-muted small">Se creará como <strong>{{ a.prefijo }}-{{ "%03d"|format(a.numero_siguiente) }}</strong> en BORRADOR. Marca los clientes (o un grupo completo), ajusta valores y conceptos si hace falta, escoge el pagador y confirma.</p>
+
+<form method="post" id="formNueva">
+  <div class="card mb-3 p-3">
+    <div class="row g-2 align-items-end">
+      <div class="col-md-6">
+        <label class="form-label mb-0">A nombre de quién sale la cuenta (pagador)</label>
+        <select class="form-select form-select-sm" name="pagador_id" id="selPagador">
+          <option value="">— Automático: pagador del grupo / primera línea —</option>
+          {% for cli in pagadores %}<option value="{{ cli.id }}">{{ cli.nombre }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="col-md-6 small text-muted">Si no escoges, se usa el pagador marcado en el grupo familiar.</div>
+    </div>
+  </div>
+  <div class="row g-4">
+    <div class="col-lg-7">
+      <div class="card">
+        <div class="card-header bg-white d-flex gap-2 align-items-center">
+          <input class="form-control form-control-sm" id="filtro" placeholder="Filtrar clientes...">
+          <button type="button" class="btn btn-sm btn-outline-primary" id="selGrupo">Agregar grupo completo…</button>
+        </div>
+        <div class="table-responsive" style="max-height: 480px; overflow-y: auto;">
+          <table class="table table-sm mb-0">
+            <thead><tr><th></th><th>Cliente</th><th>Grupo</th><th class="num">Presupuesto</th></tr></thead>
+            <tbody>
+            {% for p in pares %}
+              <tr class="picker-row" data-cid="{{ p.cliente.id }}" data-nombre="{{ p.cliente.nombre|lower }}"
+                  data-grupo="{{ p.cliente.grupo_id or '' }}">
+                <td style="width: 30px;"><input class="form-check-input chk" type="checkbox" name="clientes"
+                      value="{{ p.cliente.id }}" id="c{{ p.cliente.id }}"></td>
+                <td><label for="c{{ p.cliente.id }}">{{ p.cliente.nombre }}</label>
+                  {% if p.cliente.id in ya_en %}<span class="badge bg-danger" title="Ya tiene cuenta este año: el sistema no dejará duplicarla">ya en {{ ya_en[p.cliente.id] }}</span>{% endif %}
+                  {% if p.cliente.es_pagador %}<span class="badge bg-info text-dark">pagador</span>{% endif %}</td>
+                <td class="small text-muted">{{ p.cliente.grupo.nombre if p.cliente.grupo }}</td>
+                <td class="num">{{ (p.valor)|money }}</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-5">
+      <div class="card">
+        <div class="card-header bg-white fw-semibold">Líneas de la cuenta</div>
+        <div class="card-body">
+          <table class="table table-sm" id="tablaLineas">
+            <thead><tr><th>Cliente</th><th style="width: 160px;">Valor</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table>
+          <div class="d-flex justify-content-between fw-bold fs-5 border-top pt-2">
+            <span>TOTAL</span><span id="total">$ 0</span>
+          </div>
+          <label class="form-label small mt-3 mb-1">Observaciones del PDF <span class="text-muted fw-normal">(opcional; salen en el documento, sección OBS.)</span></label>
+          <textarea class="form-control form-control-sm" name="observaciones" rows="2"
+                    placeholder="Ej: favor consignar a la cuenta indicada..."></textarea>
+        </div>
+      </div>
+      <button class="btn btn-primary btn-lg mt-3" type="submit"><i class="bi bi-check-lg"></i> Crear cuenta en borrador</button>
+      <button class="btn btn-outline-primary btn-lg mt-3" type="button"
+              data-pdf="{{ url_for('main.cuenta_preview') }}" data-pdf-form="#formNueva"
+              data-titulo="Vista previa (no crea la cuenta)">
+        <i class="bi bi-eye"></i> Previsualizar PDF</button>
+      <a class="btn btn-outline-secondary mt-3" href="{{ url_for('main.cuentas') }}">Cancelar</a>
+    </div>
+  </div>
+</form>
+
+<!-- selector de grupo -->
+<div class="modal fade" id="modalGrupo">
+  <div class="modal-dialog"><div class="modal-content">
+    <div class="modal-header"><h5 class="modal-title">Agregar grupo completo</h5>
+      <button class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body">
+      {% for g in grupos %}
+        <button type="button" class="btn btn-outline-primary w-100 mb-2 btn-grupo" data-gid="{{ g.id }}">{{ g.nombre }}</button>
+      {% else %}
+        <p class="text-muted">No hay grupos creados.</p>
+      {% endfor %}
+    </div>
+  </div></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const filas = {};
+function fmt(n){ return "$ " + n.toLocaleString("es-CO"); }
+
+function filaHtml(cid, nombre, valor){
+  return `<tr data-cid="${cid}">
+    <td>
+      <div>${nombre}</div>
+      <input class="form-control form-control-sm mt-1" name="concepto_${cid}"
+             placeholder="Concepto propio (opcional)">
+    </td>
+    <td><input class="form-control form-control-sm text-end" name="valor_${cid}" value="${valor}" type="number" step="1000"></td>
+    <td><button type="button" class="btn btn-sm btn-outline-danger btn-quitar">×</button></td></tr>`;
+}
+
+function sync(cid, on){
+  const row = document.querySelector(`tr.picker-row[data-cid="${cid}"]`);
+  const chk = row.querySelector(".chk");
+  chk.checked = on;
+  row.classList.toggle("selected", on);
+  const nombre = row.querySelector("label").textContent.trim();
+  const valorTxt = row.cells[3].textContent.replace(/[^0-9]/g, "");
+  let tr = document.querySelector(`#tablaLineas tbody tr[data-cid="${cid}"]`);
+  if(on && !tr){
+    const tmp = document.createElement("tbody");
+    tmp.innerHTML = filaHtml(cid, nombre, valorTxt);
+    tr = tmp.firstElementChild;
+    document.querySelector("#tablaLineas tbody").appendChild(tr);
+    tr.querySelector(".btn-quitar").onclick = () => sync(cid, false);
+  } else if(!on && tr){ tr.remove(); }
+  recalc();
+}
+
+function recalc(){
+  let t = 0;
+  document.querySelectorAll("#tablaLineas tbody tr").forEach(tr => {
+    t += parseFloat(tr.querySelector("input").value || 0);
+  });
+  document.getElementById("total").textContent = fmt(t);
+}
+
+document.querySelectorAll("tr.picker-row").forEach(row => {
+  row.addEventListener("click", e => {
+    if(e.target.tagName === "INPUT" || e.target.tagName === "A") return;
+    const cid = row.dataset.cid;
+    sync(cid, !row.classList.contains("selected"));
+  });
+});
+
+document.getElementById("filtro").addEventListener("input", e => {
+  const q = e.target.value.toLowerCase();
+  document.querySelectorAll("tr.picker-row").forEach(r => {
+    r.style.display = r.dataset.nombre.includes(q) ? "" : "none";
+  });
+});
+
+const modal = new bootstrap.Modal("#modalGrupo");
+document.getElementById("selGrupo").onclick = () => modal.show();
+document.querySelectorAll(".btn-grupo").forEach(b => {
+  b.onclick = () => {
+    const gid = b.dataset.gid;
+    // marcar pagador primero y miembros
+    const rows = [...document.querySelectorAll(`tr.picker-row[data-grupo="${gid}"]`)];
+    rows.forEach(r => sync(r.dataset.cid, true));
+    modal.hide();
+  };
+});
+
+document.getElementById("formNueva").addEventListener("submit", () => {
+  // quitar del DOM los inputs de concepto de filas no seleccionadas (no aplica: se crean con la fila)
+});
+recalc();
+</script>
+{% endblock %}

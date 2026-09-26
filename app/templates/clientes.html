@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}Clientes{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h3 class="mb-0">Clientes</h3>
+  <div class="d-flex gap-2">
+    <form method="post" action="{{ url_for('main.clientes_sync_maestro') }}"
+          onsubmit="return confirm('Traer del Sistema Maestro las rentas AG-2025 ya presentadas (scanner) y marcarlas aquí? Cruce por NIT.');">
+      <button class="btn btn-outline-success" title="Marca PRESENTADA a todos los clientes cuya renta ya salió en el scanner del maestro"><i class="bi bi-cloud-download"></i> Rentas del maestro</button>
+    </form>
+    <form method="post" action="{{ url_for('main.clientes_importar_cobros_2025') }}"
+          onsubmit="return confirm('¿Leer el Excel del año anterior y guardar lo EFECTIVAMENTE cobrado por cliente? (reemplaza los valores guardados)');">
+      <button class="btn btn-outline-secondary" title="Lee la hoja 'Cuentas de Cobro' del Excel del año anterior y guarda lo realmente pagado, prorrateado en grupos"><i class="bi bi-file-earmark-excel"></i> Pagos {{ (a.anio_cobro|int - 1) if a }} (Excel)</button>
+    </form>
+    <a class="btn btn-outline-primary" href="{{ url_for('main.importar') }}"><i class="bi bi-person-lines-fill"></i> Importar clientes</a>
+    <a class="btn btn-primary" href="{{ url_for('main.cliente_nuevo') }}"><i class="bi bi-person-plus"></i> Nuevo cliente</a>
+  </div>
+</div>
+
+<ul class="nav nav-pills mb-3">
+  <li class="nav-item"><a class="nav-link {{ 'active' if ver == 'activos' }}" href="?ver=activos">Activos</a></li>
+  <li class="nav-item"><a class="nav-link {{ 'active' if ver == 'cobrables' }}" href="?ver=cobrables" title="Declaraciones al día (cliente y su grupo)">Cobrables</a></li>
+  <li class="nav-item"><a class="nav-link {{ 'active' if ver == 'inactivos' }}" href="?ver=inactivos">Inactivos</a></li>
+  <li class="nav-item"><a class="nav-link {{ 'active' if ver == 'todos' }}" href="?ver=todos">Todos</a></li>
+</ul>
+
+<div class="row g-2 mb-3">
+  <div class="col-md-5">
+    <input class="form-control" id="buscador" type="search" autocomplete="off"
+           placeholder="Escribe y filtra al instante: sin tildes, por nombre, código o NIT...">
+  </div>
+</div>
+
+<div class="card">
+  <div class="table-responsive">
+  <table class="table table-sm table-hover mb-0" id="tablaClientes">
+    <thead><tr><th>Cód.</th><th>Nombre</th><th>Tipo</th><th>C.C./NIT</th><th>Contacto</th>
+      <th>Grupo</th><th>Declaración</th><th class="num">Presupuesto {{ a.anio_cobro if a }}</th>
+      <th class="num" title="Efectivamente pagado {{ a.anio_cobro if a }} según pagos registrados">Pagado {{ a.anio_cobro if a }}</th>
+      <th class="num">Cobrado {{ (a.anio_cobro|int - 1) if a }}</th>
+      <th class="num" title="Efectivamente pagado {{ (a.anio_cobro|int - 1) if a }} (Excel del año anterior o edición manual)">Efect. pagado {{ (a.anio_cobro|int - 1) if a }}</th><th></th></tr></thead>
+    <tbody>
+    {% for cli in clientes %}
+      <tr data-buscar="{{ cli.codigo }} {{ cli.nombre|lower }} {{ cli.nit }} {{ cli.grupo.nombre|lower if cli.grupo }}">
+        <td>{{ cli.codigo }}</td>
+        <td>
+          <a href="{{ url_for('main.cliente_detalle', cid=cli.id) }}"
+             class="{% if estados_cobro.get(cli.id) == 'pagada' %}cobro-pagada{% elif estados_cobro.get(cli.id) == 'enviada' %}cobro-enviada{% endif %}">{{ cli.nombre }}</a>
+          {% if estados_cobro.get(cli.id) == 'pagada' %}<i class="bi bi-check-circle-fill text-success" title="Ya pagó su cuenta de cobro este año"></i>
+          {% elif estados_cobro.get(cli.id) == 'enviada' %}<i class="bi bi-send-fill text-primary" title="Cuenta de cobro enviada (falta pago)"></i>{% endif %}
+          {% if cli.es_pagador %}<span class="badge bg-info text-dark" title="Pagador del grupo">pagador</span>{% endif %}
+          {% if not cli.activo %}<span class="badge bg-secondary">inactivo</span>{% endif %}
+        </td>
+        <td>{{ cli.tipo }}</td>
+        <td>{{ cli.nit }}{% if cli.dv %}-{{ cli.dv }}{% endif %}</td>
+        <td class="small">
+          {% if cli.email %}<i class="bi bi-envelope" title="{{ cli.email }}"></i>{% endif %}
+          {% if cli.telefonos %}<i class="bi bi-telephone" title="{{ cli.telefonos }}"></i>{% endif %}
+        </td>
+        <td class="small">{{ cli.grupo.nombre if cli.grupo }}</td>
+        <td>
+          <form method="post" class="d-inline form-decl" action="{{ url_for('main.cliente_decl', cid=cli.id) }}">
+            <button class="btn btn-sm decl-btn {{ 'btn-success' if cli.decl_renta == 'PRESENTADA' else ('btn-outline-secondary' if cli.decl_renta == 'NO_OBLIGADO' else 'btn-outline-warning') }}"
+                    title="{{ cli.estado_cobro_grupo }}">{{ cli.decl_renta == 'PRESENTADA' and '✓ Renta' or (cli.decl_renta == 'NO_OBLIGADO' and 'No oblig.' or 'Sin dato') }}</button>
+          </form>
+        </td>
+        <td class="num">{% set p = presup.get(cli.id) %}{% if p %}{{ (p.valor)|money }}{% endif %}</td>
+        <td class="num text-success">{% set pg = pagado_actual.get(cli.id) %}{% if pg %}{{ pg|money }}{% else %}·{% endif %}</td>
+        <td class="num text-muted">{% if cli.cobrado_anterior %}{{ cli.cobrado_anterior|money }}{% else %}·{% endif %}</td>
+        <td class="num">
+          <form class="d-inline" method="post" action="{{ url_for('main.cliente_cobrado_anterior', cid=cli.id) }}">
+            <input class="form-control form-control-sm text-end cobant-input d-none" name="valor" type="number" step="1000" min="0"
+                   value="{{ '%d'|format(cli.cobrado_anterior_real) if cli.cobrado_anterior_real else '' }}" placeholder="0">
+            <span class="cobant-text {{ 'text-success' if cli.cobrado_anterior_real else 'text-muted' }}" role="button"
+                  title="Clic para editar: lo realmente pagado {{ (a.anio_cobro|int - 1) if a }}">{{ cli.cobrado_anterior_real|money if cli.cobrado_anterior_real else '·' }}</span>
+          </form>
+        </td>
+        <td class="text-end">
+          <div class="d-flex gap-1 justify-content-end">
+            {% if ver != 'inactivos' %}
+            <form method="post" action="{{ url_for('main.cliente_cuenta_expresa', cid=cli.id) }}"
+                  onsubmit="return confirm('Expreso completo: crea la cuenta de {{ cli.nombre }} con lo presupuestado, genera el PDF y deja el borrador de Outlook (.eml) listo. ¿Seguir?');">
+              <button class="btn btn-sm btn-outline-primary" title="Expreso completo: crea con lo presupuestado, PDF y borrador de Outlook listo para enviar{% if cli.es_pagador and cli.grupo %} (incluye a {{ cli.grupo.miembros.count() }} miembros del grupo {{ cli.grupo.nombre }}){% endif %}"><i class="bi bi-lightning-charge"></i></button>
+            </form>
+            {% if correos.get(cli.id) %}
+            <a class="btn btn-sm btn-outline-success" href="{{ url_for('main.cliente_correo', cid=cli.id) }}"
+               title="Redacta el correo de la cuenta de {{ cli.nombre }} (igual que el botón Redactar correo de la cuenta) y descarga el .eml listo para abrir en Outlook{% if correos.get(cli.id) > 1 %} — tiene {{ correos.get(cli.id) }} borradores guardados; este genera uno nuevo{% endif %}"><i class="bi bi-envelope-open"></i></a>
+            {% else %}
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.cliente_correo', cid=cli.id) }}"
+               title="Redacta el correo de la cuenta de {{ cli.nombre }} (igual que el botón Redactar correo de la cuenta) y descarga el .eml listo para abrir en Outlook"><i class="bi bi-envelope"></i></a>
+            {% endif %}
+            {% endif %}
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.cliente_editar', cid=cli.id) }}"><i class="bi bi-pencil"></i></a>
+          </div>
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="12" class="text-center text-muted py-4">No hay clientes en esta vista.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+// normaliza: quita tildes y pasa a minúsculas
+const norm = s => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const filas = document.querySelectorAll("#tablaClientes tbody tr[data-buscar]");
+document.getElementById("buscador").addEventListener("input", e => {
+  const q = norm(e.target.value.trim());
+  let visibles = 0;
+  filas.forEach(tr => {
+    const ok = !q || norm(tr.dataset.buscar).includes(q);
+    tr.style.display = ok ? "" : "none";
+    if (ok) visibles++;
+  });
+});
+</script>
+{% endblock %}

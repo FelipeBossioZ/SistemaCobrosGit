@@ -1,0 +1,43 @@
+Notas: 
+http://localhost:5000/ esta en uso con el sistema Maestro
+http://localhost:5678/ esta en uso con el de contraseñas
+http://localhost:5173/ Esta en uso con Don Peppini Contadore
+
+
+1. ¿Arrancamos con la Fase 1 tal como la definí (C de C + seguimiento de pagos + dashboard) y dejamos facturas y vencimientos para después? Si de acuerdo.
+
+2. ¿La app corre solo en tu PC o la vas a abrir desde otro equipo/celular en la red de la oficina? ¿Quién más la va a usar? ¿Le ponemos un login simple o sin clave? Inicialmente sin clave, solo la voy a usar yo mientras la vamos desarrollando y trabajando al mismo tiempo. La voy a abrir en el PC de la casa y de la Oficina, Normalmente lo que hago con todos estos programas que se han creado es organizar un instalador (si es necesario) y un iniciador .bat entonces lo que haga en la oficina lo puedo ver en la casa sin problema.
+
+3. ¿Importo todo lo del Excel: clientes activos + retirados + los cobros del ciclo actual con su estado (las 5 cuentas 26-xxx ya enviadas/pagadas)? Pensaría que solo los activos, la idea es depurar y borrar lo que no sirve ya.
+
+¿Y necesitas también cargar el histórico de años anteriores dentro del sistema, o con que quede el año actual basta? Con lo del año actual basta, para el próximo año la idea es que se tenga un referente de lo que se cobre este año y haga un aumento automatico correspondiente al IPC que yo le pongo en la parametrizada, pero lo que esta viejo eso ya no.
+
+4. Confírmame el ciclo: ¿el año actual a manejar es año gravable 2025, cobrado en 2026 (C de C “26-xxx”)? Si, así es.
+¿El concepto del PDF dirá “Asesoría tributaria año gravable 2025”? Si, así es.
+
+5. El valor de la C de C, ¿lo digitas tú por cliente (el sistema solo registra), o quieres que el sistema proponga el valor sumando los trámites marcados con las mínimas/IPC parametrizadas? Que el sistema proponga de acuerdo a este Excel y yo voy revisando uno a uno a ver que es la cosa y que pueda modificar el valor si toca.
+
+
+6. ¿Replicamos el diseño exacto de tus PDFs actuales (membrete, disposición) o te parece bien que mantenga todos los datos pero con un diseño un poco más limpio? Diseño más limpio, menos soso más minimalita o algo así conforme a la época actual
+
+¿Tienen logo que deba ir? Sin logo
+
+7. ¿“26-001, 26-002…” automática reiniciando cada año, correcto? Correcto.
+
+¿Qué pasa cuando anulan una cuenta — se elimina o se anula conservando el número (queda hueco)? Normalmente se le asigna a otro cristiano, pero eso no me cuadra a mi mucho, ayúdame a implementar algo más limpio
+
+8. Los datos del emisor/receptor (Diego Alberto Fernández Fernández, Bancolombia 006-985327-51, Nequi @diego2891, dirección CR 46 49 A 27 OF 605, tel 511 1353, ciudad Medellín) — ¿son fijos con edición por año? Este año va a ser fijo para todo, pero la idea es cambiar eso los próximos años y la llave " @diego2891" no es de Nequi , es de Bancolombia la misma cuenta.
+
+Y vi “GERMÁN TULIO FERNÁNDEZ FERNÁNDEZ” en los encabezados del Excel y facturas “GTFF-xxx”: ¿cuál de los dos emite las cuentas de cobro, o son los dos según el caso? Según el caso, Germán solo para facturas y Diego Cuentas de cobro.
+
+Grupos y pagos: 9. La cuenta compartida 26-005 entre Osorio Arcila y Peña Santamaría: ¿es un grupo familiar o agrupaciones ad-hoc? Es grupo familiar y el pagador es Peña, pero el la cuenta tiene que estar especificado cuando se le cobra a cada uno.
+
+
+En general, ¿cómo identifico hoy los grupos: te toca pasarme la lista, o la armo desde la hoja “Grupos Familiares” + las observaciones “Fra con -X”? 10. Cuando una cuenta de cobro es de familia, ¿el pago siempre entra completo, o puede pasar que un miembro pague lo suyo por separado (abonos parciales por persona)? En esta hoja del Excel "Grupos Familiares" están discriminados, la cosa es que dentro de un grupo familiar hay sub grupos jajaja, entonces ayúdame a implementar un check box o algo parecido que yo manualmente pueda anclar una persona con otra y además decir a nombre de quien sale la cuenta de cobro. Es muy importante que solo te centres en las cuentas de cobro las facturas eso es un mundo aparte y todavía no nos metamos con ese chicharron.
+
+
+11. Medios de pago a parametrizar: veo Transferencia, Consignación, Nequi/Banco Nu, Efectivo. ¿Cuál es la lista real? El medio de pago para nosotros es la cuenta de Bancolombia (ya te puse que la llave es la misma cosa) ya el cliente decide como hacerlo si por transferencia, consignación o a través de otro banco por llave, lo que yo necesito es marcar como el cliente hizo el pago para tener trazabilidad.
+
+12. El descuento tipo “se auto descuenta y solo paga $380.000”: ¿ese ajuste se hace antes de emitir la cuenta (el PDF ya sale con el valor real) o después (sale con $410.000 y se registra pago de $380.000 con descuento)? Primero sale el PDF y después el cliente se aplica el descuento (con estos clientes toca así) entonces que en las observaciones salga el autodescuento, porque para el próximo año se debe arrastar el valor de la cuenta de cobro y no el pago real, aunque necesito el valor del pago real también pero solo de referencia para mi para volver a negociar.
+
+Facturas (solo para dejar el diseño listo): 13. Las facturas GTFF-xxx, ¿las emiten en otro sistema (emisor DIAN) y aquí solo se registran para el consolidado, o quieres que este sistema también las genere algún día? Se hacen por medio de la DIAN, aquí solo para el consolidado y saber como voy a montar las facturas en el sistema de la DIAN y además para asignarle el Número de la factura REAL.

@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}{{ cli.nombre }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div>
+    <h3 class="mb-1">{{ cli.nombre }} <span class="badge bg-secondary">cód. {{ cli.codigo }}</span>
+      {% if not cli.activo %}<span class="badge bg-dark">inactivo</span>{% endif %}</h3>
+    <div class="text-muted small">
+      {{ cli.tipo }} · C.C./NIT {{ cli.nit }}{% if cli.dv %}-{{ cli.dv }}{% endif %} · {{ cli.ciudad }}
+      {% if cli.grupo %} · Grupo: <a href="{{ url_for('main.grupos') }}">{{ cli.grupo.nombre }}</a>
+        {% if cli.es_pagador %}<span class="badge bg-info text-dark">pagador</span>{% endif %}{% endif %}
+      {% if cli.nota %} · {{ cli.nota }}{% endif %}
+    </div>
+    <div class="small mt-1">
+      <span class="text-muted">Contacto:</span>
+      {% if cli.email %}<i class="bi bi-envelope"></i> {{ cli.email }}{% else %}<span class="text-warning"><i class="bi bi-envelope-slash"></i> sin correo</span>{% endif %}
+      {% if cli.telefonos %} · <i class="bi bi-telephone"></i> {{ cli.telefonos }}{% endif %}
+      {% if cli.direccion %} · <i class="bi bi-geo-alt"></i> {{ cli.direccion }}{% endif %}
+    </div>
+  </div>
+  <div>
+    <a class="btn btn-outline-primary" href="{{ url_for('main.cliente_editar', cid=cli.id) }}"><i class="bi bi-pencil"></i> Editar</a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('main.clientes') }}">Volver</a>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header bg-white fw-semibold">Presupuestos por año</div>
+  <div class="card-body p-0">
+    <table class="table table-sm mb-0">
+      <thead><tr><th>Año de cobro</th><th class="num">Valor presupuestado</th></tr></thead>
+      <tbody>
+      {% for p in presup %}
+        <tr><td>{{ p.anio_cobro }}</td><td class="num">{{ (p.valor)|money }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header bg-white fw-semibold">Trabajos adicionales <span class="text-muted fw-normal small">(fuera del presupuesto; para revisar antes de cobrar el próximo año)</span></div>
+  <div class="card-body p-0">
+    <table class="table table-sm mb-0">
+      <thead><tr><th>Fecha</th><th>Descripción</th><th class="num">Valor</th><th>Estado</th><th></th></tr></thead>
+      <tbody>
+      {% for t in cli.trabajos.order_by(TrabajoAdicional.fecha.desc(), TrabajoAdicional.id.desc()) %}
+        <tr>
+          <td>{{ t.fecha.strftime('%d/%m/%Y') if t.fecha }}</td>
+          <td>{{ t.descripcion }}</td>
+          <td class="num">{% if t.valor %}{{ t.valor|money }}{% else %}<span class="text-muted">por definir</span>{% endif %}</td>
+          <td><form method="post" class="d-inline" action="{{ url_for('main.trabajo_estado', tid=t.id) }}">
+            <button class="btn btn-sm {{ 'btn-success' if t.estado == 'COBRADO' else 'btn-outline-warning' }}"
+                    title="Clic para cambiar el estado">{{ t.estado }}</button></form></td>
+          <td class="text-end"><form method="post" class="d-inline" action="{{ url_for('main.trabajo_eliminar', tid=t.id) }}"
+                onsubmit="return confirm('¿Eliminar este trabajo adicional?');">
+            <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button></form></td>
+        </tr>
+      {% else %}
+        <tr><td colspan="5" class="text-muted small p-3">Sin trabajos adicionales registrados.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card-body border-top">
+    <form class="row g-2" method="post" action="{{ url_for('main.cliente_trabajo_nuevo', cid=cli.id) }}">
+      <div class="col-md-6"><input class="form-control form-control-sm" name="descripcion" required placeholder="Descripción (ej: requerimiento DIAN, consulta tributaria...)"></div>
+      <div class="col-md-2"><input class="form-control form-control-sm" name="valor" type="number" step="1000" placeholder="Valor"></div>
+      <div class="col-md-auto"><button class="btn btn-sm btn-outline-primary"><i class="bi bi-plus-lg"></i> Registrar</button></div>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header bg-white fw-semibold">Historial de cuentas de cobro</div>
+  <div class="table-responsive">
+  <table class="table table-sm table-hover mb-0">
+    <thead><tr><th>Año</th><th>Cuenta</th><th>Fecha</th><th class="num">Su valor</th>
+      <th class="num">Total cuenta</th><th class="num">Ajustes</th><th class="num">Pagos</th><th class="num">Saldo cuenta</th>
+      <th>Estado</th><th>Envíos</th><th>Pagos (detalle)</th></tr></thead>
+    <tbody>
+    {% for h in historial %}
+      <tr>
+        <td>{{ h.anio }}</td>
+        <td><a href="{{ url_for('main.cuenta_detalle', cid=h.cuenta_id) }}">{{ h.numero }}</a>
+          {% if h.estado_linea != 'ACTIVA' %}<span class="badge bg-secondary">línea anulada</span>{% endif %}</td>
+        <td>{{ h.fecha.strftime('%d/%m/%Y') if h.fecha }}</td>
+        <td class="num">{{ (h.valor)|money }}</td>
+        <td class="num">{{ (h.total)|money }}</td>
+        <td class="num">{% if h.ajustes %}-{% endif %}{{ (h.ajustes|abs)|money }}</td>
+        <td class="num text-success">{{ (h.pagos|sum(attribute='valor') if h.pagos else 0)|money }}</td>
+        <td class="num {% if h.saldo > 0 %}text-danger{% endif %}">{{ (h.saldo)|money }}</td>
+        <td><span class="badge badge-estado-{{ h.estado_cuenta }}">{{ h.estado_cuenta }}</span></td>
+        <td class="small">{% for e in h.envios %}{{ e.medio }} {{ e.fecha.strftime('%d/%m/%y') }}<br>{% endfor %}</td>
+        <td class="small">{% for p in h.pagos %}{{ (p.valor)|money }} · {{ p.forma }} · {{ p.fecha.strftime('%d/%m/%y') }}<br>{% endfor %}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="11" class="text-center text-muted py-4">Sin cuentas de cobro todavía.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endblock %}

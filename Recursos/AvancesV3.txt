@@ -1,0 +1,47 @@
+Un cuadro de anticipo. Cobrado y pagado real. Si falta info que se les hizo por maestro Liquidación automatica de lo adicional.  Rastrear por el RUT los correo, se puede?
+
+Vamos con una actualización grande entonces le haces con calma no hay afán, planeamos si es necesario, recuerda que ante la mínima duda me preguntas primero, entonces la actualización es la siguiente.
+ 1.  En el dash de resumen quiero un cuadro adicional que quede justo debajo presupuestado, que haga una operación matemática que reste el total presupuestado menos el total PAGADO y me lo muestre, como para saber de todo lo que se presupuesto cuando falta por cobrar más o menos. Dudas?
+2. En el listado de clientes necesito una columna adicional que me muestre lo que realmente pagaron, por ejemplo Doña Elsy se le presupuesto 410mil y el año pasado lo mismo pero no tengo forma de ver en ese mismo listado cuanto pago realmente.
+3. Esta es la más importante y vamos a usar la base de datos del sistema maestro. Entonces resulta que cada cliente tiene sus propios vencimientos de acuerdo a que asesoría se le presta por ejemplo, Luz Elena Acevedo solo tiene en maestro el vencimiento de RentaPN y el escaner revisa en que estado esta, entonces si esta presentada la marca como presentada o pagada, y en estos momentos el sistema de cobros reconoce eso, pero existen otras asesorías como el caso de GONZÁLEZ LEMOS JUAN CARLOS que aparte de la RentaPN tiene, Activos en exterior, Información Exógena e impuesto al patrimonio, nosotros cobramos de acuerdo a la cantidad de asesorías prestadas con un porcentaje, en estos momentos las cuentas de cobro estas todas al bulto y da un único valor en el PDF y eso esta bien no quiero cambiar el PDF, lo que quiero es que a cada cliente se le pueda ver que asesorías se les presto y que esten efectivamente presentadas, en este punto es donde juega el sistema maestro, porque el en su base de datos tiene a todos los clientes y tiene todos lo vencimientos y tiene marcado que se le ha presentado y que no, entonces necesito ver en cada cliente esto y cuanto se le esta cobrando por cada cosa, ejemplo: El valor base para calcular todo es la declaración de renta, entonces juan Carlos tiene presupuestado $1.850.000 que esta discriminado de la siguiente manera, Decl RTA: 724.000, tiene activos exterior? SI, entonces se cobra el 30% del valor de RTA = 217.200, tiene Medios Magneticoos/Exógena? SI, entonces se cobra el 75% de Renta = 534.000, Se le presento Impuesto al patrimonio (IP)? Si, se cobra entonces el 50% de renta = 362.000, total $1.837.200, pero mira que el total es otro valor 1.850.000 esto se debe a que lo estamos redondeando a favor de nosotros. Entonces no solo existen estas asesorías hay muchas más te cuento cuales son:
+NOTA importante: las declaraciones de IVA y Retención en la fuente tienen una base diferente IVA BASE= 150.000 RF=100.000, estos valores son los que arranco yo pero a muchos clientes por antigüedad se les cobra menos, entonces necesito ir estandarizando valores y necesito que pueda editarlos por cliente, pero quiero arrancar con un estándar y sería este. También pasa con las personas que se les organiza la facturación electrónica BASE inscripción y actualización de certificado y numeración =80.000 año incrementa con IPC. Valor por elaboración de facturas BASE= 20.000. Contabilidad PN 1 Salario mínimo legal vigente por año en curso por mes (año 2026 $1.750.905). Contabilidad PJ tres tipos Básica=$600.000 por Mes (aumenta con IPC), compleja 1 Salario mínimo legal vigente por año en curso por mes (año 2026 $1.750.905) por mes.
+	3.1 VALOR DECLARACIÓN IP= 50%
+	3.2 VALOR MEDIOS MAGNÉTICOS= 75%
+	3.3 EXÓGENA MPIO MEDELLÍN= 15%
+	3.4 VALOR FORMATO  2516 CONSERVAR= 10%
+	3.5 VALOR FORMATO  2516 TRANSMITIR= 20%
+	3.6 VALOR DECLARACIÓN ACTIVOS EN EL EXTERIOR= 30%
+	3.7 VALOR OTRAS ASESORÍAS=
+		3.7.1 DECLARACIÓN IVA: SI/NO? CUANTAS? = Base*cantidad
+		3.7.2 DECLARACIÓN RET FTE (Rentención en la fuente): SI/NO? CUANTAS? = Base*cantidad
+		3.7.3 DEVOLUCIÓN IMPUESTOS= 20% del valor solicitado en la devolución (casos muy especiales y esporádicos)
+		3.7.4 FACTURACIÓN ELECTRÓNICA
+		3.7.5 PROCESO CONTABLE? SI/NO? TIPO? Cuantos meses?= Base*meses
+		3.7.6 RENOVACIÓN REGISTRO MERCANTIL CAMARA DE COMERCIO= 50% de la declaración de renta
+		3.7.7 DECLARACIÓN ANUAL INDUSTRIA Y COMERCIO= 50% de la declaración de renta
+		3.7.8 OTRAS ASESORÍAS NO DISCRIMINADAS ANTERIORMENTE: Valor aleatorio no tiene base, se calcula de acuerdo al cliente y fue ejemplo, reuniones en x lugar, cantidad de reuniones, procesos de asesoramiento tributario 			especializado, Constitución sociedad, estatutos, etc. Pueden ser varias cosas.
+
+4. Este punto es muy especial y espero que me recuerdes de abordarlo una vez los 3 primeros este funcionando 100% y es intentar sincronizar el sistema con un excel y revisar unas celdas en especial, no te doy más detalles para no confundir la cosa pero es para tenerlo en cuenta. 
+
+Necesito que todo esto lo ejecutemos como en un sistema de pruebas, es decir, crear un sistema de cobros paralelo ejecutado en un local:777 (como por poner cualquier numero xD) en donde podamos hacer todas las pruebas antes de actializar el código que actualmente esta en producción, como son tantos cambios no quiero que lo que ya funcione empiece a crachear, sino, que pueda perratiar otro sistema identico sin que me afecte lo que ya funciona, una vez aprobado el funcionamiento actualizamos el código de producción sin tocar la base de datos, entonces el sistema de pruebas puede tener una copia de la BD del de producción pero aparte para que no vaya a dañar nada y cuando se actualice al de producción esa BD se queda quieta no se pasa ni nada de eso. Entonces si quieres podemos usar esta otra carpeta "C:\OneDriveOficina\OneDrive\OFICINA\FELIPE\Oficina Felipe\6-Presupuestos\SistemaPruebas" para montar las pruebas allí, te parece?
+
+Si o si necesitamos planear antes de arrancar con los tres puntos. Listo?
+
+
+1. La propuesta me suena, trabajemos con lo que propones
+2. Necesito 4 columnas: "Presupuesto 2026" "Efectivamente pagado 2026" "Cobrado 2025" "Efectivamente cobrado 2025" (los años actualizan de acuerdo al año en curso.
+3. Si, aplican los mismo % y bases para PJ y PN
+4. Si, dejalo defecto 10% yo manual cambio si toca
+5. Es verdad, esos me faltaron: CONSUMO, ANTICIPO_RST misma base que la Retefuente. RST (SIMPLE), esta es como si fuera una declaración de renta, por ejemplo Christian Cock la base no seria RentaPN, sino RST (SIMPLE). SUPERSOCIEDADES son muy complejos van al 75%. RUB ese es al 15%
+6. La ideas es que saques las que el maestro muestre como presentadas, si yo veo inconsistencias ya le meto la mano, de resto la idea es que el  sistema detecte las cantidades, igual que con los anticipos de RST y CONSUMO
+7. Si, correcto
+
+
+
+
+1. Por cada cliente es posible generar una Photo card o algo parecido donde me discrimine todo lo que le estoy cobrando, por si el cliente me lo pide en algun momento?
+2. No me calcula los IVAs y como hago para que el sistema recorra a todos los clientes y marque lo que se le ha hecho y las cantidades?
+3. Que pasa con los valores cuando no me da exactamente el mismo valor presupuestado que ya tiene cada cuenta por defecto? es decir, resulta que en estos momentos todos los clientes se supone ya esta listo el presupuesto, pero si me falto cobrar unos activos en el exterior y apenas me di cuenta? Me deberia advertir si modificar el presupuesto inicial ya sea por encima o por debajo ya que puede que este cobrando en exceso y tampoco quiero eso. Me ayudas? dame la mejor idea para eso y tambien que todo quede documentado si?
+4. Cada cliente tiene un codigo pero que pasa si entra uno nuevo, el sistema automaticamente le asiga un código tomando en cuenta el último numero? 
+5. Esta sumatoria "Total asesorías 2026	$ 40.000	$ -1.300.000 vs presupuesto" no se esta haciendo en tiempor real, necesito que el label muestre cuanto falta en amarillo o si me pase en rojo o si esta ok en verde pero que lo vaya haciendo a medida que yo voy revisando y actualizando valores si hace falta, pero la idea es que el sistema haga el recorrido con el maestro y me tire un primer depurado de acuerdo a los estandares y las declaraciones que estan presentada, que haga el estandar inicial cuando el cliente tenga la renta presentada y este listo para cobrar que automaticamente me arroge ese primer desgloce y yo ya lo confirmo o modifico y si afecta el valor presupuestado inicial que la cuenta en PDF se marque, si la cuenta de cobro esta enviada o pagada no me modifica el PDF pero si me ponga una nota interna en la C de C que diga que error en el calculo de la cuenta, valor real tanto, ver photo car en cliente" o algo así
+6. Como no me va a dar tiempo de que ejecutes todo esto, necesito que me dejes una copia de memoria de lo que quiero hacer en la carpeta de SistemaPrueba para terminar esto en el otro pc. Si? RECUERDA NO TIENES QUE HACER NADA, SOLO NECESITO UNA MEMORIA EN ESTOS MOMENTOS PARA SEGUIR EN MI OTRO PC. Muchisimas gracias

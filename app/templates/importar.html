@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Importar Excel{% endblock %}
+{% block content %}
+<h3 class="mb-1">Importar desde Excel</h3>
+<p class="text-muted">Dos tipos de importación. Elige el que necesites: el archivo grande de la campaña
+(el que usas hoy, con la hoja "Cuentas de Cobro") o la plantilla simple para crear/actualizar clientes.</p>
+
+<div class="row g-4">
+  <div class="col-lg-6">
+    <div class="card h-100 p-4">
+      <h5><i class="bi bi-file-earmark-bar-graph"></i> Archivo de campaña (Presupuesto de cobros)</h5>
+      <p class="small text-muted">Importa clientes <strong>activos</strong>, presupuestos del año y las cuentas
+      del ciclo actual con su estado (número, envío, pago y autodescuentos). Lo retirado y los años
+      anteriores se ignoran.</p>
+      <form method="post" enctype="multipart/form-data" action="{{ url_for('main.importar') }}">
+        <input class="form-control" type="file" name="archivo" accept=".xlsx" required>
+        <button class="btn btn-primary mt-3"><i class="bi bi-file-earmark-arrow-up"></i> Importar campaña</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="col-lg-6">
+    <div class="card h-100 p-4">
+      <h5><i class="bi bi-person-lines-fill"></i> Plantilla de clientes</h5>
+      <p class="small text-muted">Crea o actualiza clientes con TODA su información: código, nombre,
+      tipo, CC/NIT, ciudad, dirección, teléfonos, <strong>correo</strong>, grupo familiar, pagador,
+      activo, nota y presupuesto. La llave es el <strong>código</strong>: si existe, se actualiza;
+      si no, se crea solo si el campo <code>cliente_nuevo</code> dice <code>SI</code>.</p>
+      <a class="btn btn-outline-primary mb-3" href="{{ url_for('main.clientes_plantilla') }}">
+        <i class="bi bi-download"></i> Descargar plantilla (para llenar)</a>
+      <form method="post" enctype="multipart/form-data" action="{{ url_for('main.clientes_importar') }}">
+        <div class="mb-2">
+          <label class="form-label small mb-1">¿Crear clientes que no existan?</label>
+          <select class="form-select form-select-sm" name="cliente_nuevo">
+            <option value="">NO — solo actualizar existentes</option>
+            <option value="SI">SI — crear los nuevos</option>
+          </select>
+        </div>
+        <input class="form-control" type="file" name="archivo" accept=".xlsx" required>
+        <button class="btn btn-primary mt-3"><i class="bi bi-people"></i> Importar clientes</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="alert alert-warning mt-4 small">
+  <strong>Nota:</strong> ambas importaciones son acumulativas y seguras de re-ejecutar.
+  La de campaña actualiza clientes por código; la de clientes también (y respeta los grupos:
+  si escribes un grupo que no existe, lo crea).
+</div>
+{% endblock %}

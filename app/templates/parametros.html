@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% block title %}Parámetros{% endblock %}
+{% block content %}
+<h3 class="mb-3">Parámetros</h3>
+<form id="fparams" method="post" class="row g-4">
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header bg-white fw-semibold">Campaña {{ a.anio_cobro if a }}</div>
+      <div class="card-body">
+        {% if a %}
+        <div class="row g-3">
+          <div class="col-6">
+            <label class="form-label">Año gravable</label>
+            <input class="form-control" type="number" name="anio_gravable" value="{{ a.anio_gravable }}">
+          </div>
+          <div class="col-6">
+            <label class="form-label">Prefijo cuentas</label>
+            <input class="form-control" name="prefijo" value="{{ a.prefijo }}">
+          </div>
+          <div class="col-4">
+            <label class="form-label">IPC (ej. 0.051)</label>
+            <input class="form-control" type="number" step="0.001" name="ipc" value="{{ a.ipc }}">
+          </div>
+          <div class="col-4">
+            <label class="form-label">Mínima Mvto</label>
+            <input class="form-control" type="number" step="1000" name="valor_minima" value="{{ a.valor_minima|int }}">
+          </div>
+          <div class="col-4">
+            <label class="form-label">Mínima 1ª vez</label>
+            <input class="form-control" type="number" step="1000" name="valor_minima_primera" value="{{ a.valor_minima_primera|int }}">
+          </div>
+          <div class="col-12">
+            <label class="form-label">Concepto del PDF</label>
+            <input class="form-control" name="concepto" value="{{ a.concepto }}">
+            <div class="form-text">Vacío = "Asesoría tributaria año gravable {{ a.anio_gravable }}"</div>
+          </div>
+        </div>
+        {% else %}
+          <p class="text-muted">No hay año configurado. Ve a <a href="{{ url_for('main.anios') }}">Años</a>.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header bg-white fw-semibold">Emisor (datos del PDF)</div>
+      <div class="card-body">
+        <div class="row g-3">
+          <div class="col-12">
+            <label class="form-label">Nombre</label>
+            <input class="form-control" name="emisor_nombre" value="{{ p('emisor_nombre') }}">
+          </div>
+          <div class="col-6">
+            <label class="form-label">C.C.</label>
+            <input class="form-control" name="emisor_cc" value="{{ p('emisor_cc') }}">
+          </div>
+          <div class="col-6">
+            <label class="form-label">Ciudad</label>
+            <input class="form-control" name="emisor_ciudad" value="{{ p('emisor_ciudad') }}">
+          </div>
+          <div class="col-6">
+            <label class="form-label">Dirección</label>
+            <input class="form-control" name="emisor_direccion" value="{{ p('emisor_direccion') }}">
+          </div>
+          <div class="col-6">
+            <label class="form-label">Teléfonos</label>
+            <input class="form-control" name="emisor_telefonos" value="{{ p('emisor_telefonos') }}">
+          </div>
+          <div class="col-6">
+            <label class="form-label">Correo del emisor (remitente del .eml)</label>
+            <input class="form-control" type="email" name="emisor_email" value="{{ p('emisor_email') }}"
+                   placeholder="Ej: diego@micorreo.com">
+            <div class="form-text">Sale como remitente del borrador de correo. Opcional.</div>
+          </div>
+          <div class="col-12">
+            <label class="form-label">Datos bancarios (una línea por renglón del PDF)</label>
+            <textarea class="form-control" rows="5" name="banco_info">{{ p('banco_info') }}</textarea>
+          </div>
+          <div class="col-12">
+            <label class="form-label">Formas de pago (separadas por |)</label>
+            <input class="form-control" name="formas_pago" value="{{ p('formas_pago') }}">
+          </div>
+          <div class="col-12">
+            <label class="form-label">Carpeta para PDFs (descargas)</label>
+            <input class="form-control" name="carpeta_pdfs" value="{{ p('carpeta_pdfs') }}"
+                   placeholder="Ej: C:\\Users\\Usuario\\Documents\\Cuentas de Cobro">
+            <div class="form-text">Aquí caen los PDF con “Descargar a carpeta” y “Cuenta exprés”. Vacío = Documentos\\Cuentas de Cobro.</div>
+          </div>
+          <div class="col-12">
+            <label class="form-label">Carpeta para correos (.eml)</label>
+            <input class="form-control" name="carpeta_correos" value="{{ p('carpeta_correos') }}"
+                   placeholder="Ej: C:\\Users\\Usuario\\Documents\\Cuentas de Cobro">
+            <div class="form-text">Aquí caen los borradores de correo. Vacía = usa la carpeta de PDFs.</div>
+          </div>
+          <div class="col-12">
+            <label class="form-label">Carpeta para imágenes de cuentas (WhatsApp)</label>
+            <input class="form-control" name="carpeta_imagenes" value="{{ p('carpeta_imagenes') }}"
+                   placeholder="Ej: C:\\Users\\Usuario\\Documents\\Cuentas de Cobro\\Imagenes">
+            <div class="form-text">Aquí caen las imágenes PNG para enviar por WhatsApp. Vacía = usa la carpeta de PDFs.</div>
+          </div>
+          <div class="col-12">
+            <label class="form-label">Sistema Maestro — rutas por PC</label>
+            <div class="border rounded p-3 bg-light">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <div class="small text-muted">La primera vez llena las dos rutas; después cambia de PC con un clic.</div>
+                  <button type="submit" form="fubic" class="btn btn-sm btn-primary" title="Cambiar entre Casa y Oficina">
+                    <i class="bi bi-arrow-left-right"></i>
+                    {% if ubicacion == 'CASA' %}Estoy en CASA — cambiar a OFICINA{% elif ubicacion == 'OFICINA' %}Estoy en OFICINA — cambiar a CASA{% else %}Definir ubicación{% endif %}
+                  </button>
+              </div>
+              <label class="form-label small mb-1 mt-2">Ruta en CASA (Z:)</label>
+              <input class="form-control form-control-sm {{ 'border-success' if ubicacion == 'CASA' }}" name="ruta_casa" value="{{ ruta_casa }}"
+                     placeholder="Z:\\...\\Sistema maestro\\sistema-maestro-v7">
+              <label class="form-label small mb-1 mt-2">Ruta en OFICINA (C:)</label>
+              <input class="form-control form-control-sm {{ 'border-success' if ubicacion == 'OFICINA' }}" name="ruta_oficina" value="{{ ruta_oficina }}"
+                     placeholder="C:\\Users\\...\\OneDrive\\...\\Sistema maestro\\sistema-maestro-v7">
+              <div class="form-text mt-2">Ruta activa ahora: <code>{{ p('ruta_maestro') or '(sin configurar)' }}</code> — apunta a <code>data\sistema_maestro_v4.db</code>. El borde verde marca la ruta de la ubicación activa. Guarda con el botón de abajo después de editar.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12">
+    <button class="btn btn-primary btn-lg">Guardar parámetros</button>
+  </div>
+</form>
+
+{# formulario independiente del toggle CASA/OFICINA: va fuera del grande porque los
+   formularios no se pueden anidar (un </form> antes de tiempo mata el botón Guardar) #}
+<form id="fubic" method="post" action="{{ url_for('main.parametros_ubicacion') }}" class="d-none">
+  <input type="hidden" name="toggle" value="1">
+</form>
+{% endblock %}

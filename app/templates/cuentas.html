@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Cuentas de cobro{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h3 class="mb-0">Cuentas de cobro {{ a.anio_cobro }}</h3>
+  <a class="btn btn-primary" href="{{ url_for('main.cuenta_nueva') }}"><i class="bi bi-plus-lg"></i> Nueva cuenta</a>
+</div>
+
+<ul class="nav nav-pills mb-3">
+  <li class="nav-item"><a class="nav-link {{ 'active' if not estado }}" href="{{ url_for('main.cuentas') }}">Todas</a></li>
+  {% for e in estados %}
+  <li class="nav-item"><a class="nav-link {{ 'active' if estado == e }}" href="?estado={{ e }}">{{ e }}</a></li>
+  {% endfor %}
+</ul>
+
+<div class="card">
+  <div class="table-responsive">
+  <table class="table table-sm table-hover mb-0">
+    <thead><tr><th>Nº</th><th>Fecha</th><th>Clientes</th><th class="num">Total</th>
+      <th class="num">Ajustes</th><th class="num">Pagado</th><th class="num">Saldo</th>
+      <th>Estado</th><th>Último envío</th><th></th></tr></thead>
+    <tbody>
+    {% for c in cuentas %}
+      <tr>
+        <td><a href="{{ url_for('main.cuenta_detalle', cid=c.id) }}" class="fw-semibold">{{ c.numero_formateado }}</a></td>
+        <td>{{ c.fecha.strftime('%d/%m/%Y') if c.fecha }}</td>
+        <td class="small">{% for l in c.lineas %}{% if l.estado == 'ACTIVA' %}{{ l.cliente.nombre|truncate(30, true) }}{% if not loop.last %}, {% endif %}{% endif %}{% endfor %}</td>
+        <td class="num">{{ (c.total)|money }}</td>
+        <td class="num">{% if c.total_ajustes %}-{% endif %}{{ (c.total_ajustes|abs)|money }}</td>
+        <td class="num text-success">{{ (c.total_pagado)|money }}</td>
+        <td class="num {% if c.saldo > 0 %}text-danger{% endif %}">{{ (c.saldo)|money }}</td>
+        <td><span class="badge badge-estado-{{ c.estado }}">{{ c.estado }}</span></td>
+        <td class="small">{% set e = c.ultimo_envio %}{% if e %}{{ e.medio }} · {{ e.fecha.strftime('%d/%m/%y') }}{% endif %}</td>
+        <td>
+          <div class="d-flex gap-1">
+            <button class="btn btn-sm btn-outline-secondary" data-pdf="{{ url_for('main.cuenta_pdf', cid=c.id) }}"
+                    data-titulo="Cuenta {{ c.numero_formateado }}" title="Ver PDF"><i class="bi bi-filetype-pdf"></i></button>
+            <div class="dropdown">
+              <button class="btn btn-sm btn-outline-primary" data-bs-toggle="dropdown" title="Acciones"><i class="bi bi-lightning"></i></button>
+              <ul class="dropdown-menu dropdown-menu-end">
+                <li><button class="dropdown-item" data-accion="enviar" data-cid="{{ c.id }}" data-numero="{{ c.numero_formateado }}"><i class="bi bi-send"></i> Registrar envío</button></li>
+                <li><button class="dropdown-item" data-accion="pago" data-cid="{{ c.id }}" data-numero="{{ c.numero_formateado }}" data-saldo="{{ c.saldo|int }}"><i class="bi bi-cash-coin"></i> Registrar pago</button></li>
+                <li><button class="dropdown-item" data-accion="ajuste" data-cid="{{ c.id }}" data-numero="{{ c.numero_formateado }}"><i class="bi bi-arrow-down-circle"></i> Ajuste / descuento</button></li>
+                <li><hr class="dropdown-divider"></li>
+                <li><button class="dropdown-item" data-accion="descargar" data-cid="{{ c.id }}" data-numero="{{ c.numero_formateado }}"><i class="bi bi-download"></i> Descargar a carpeta</button></li>
+                <li><button class="dropdown-item" data-accion="imagen" data-cid="{{ c.id }}" data-numero="{{ c.numero_formateado }}"><i class="bi bi-filetype-png"></i> Generar imagen (WhatsApp)</button></li>
+                <li><button class="dropdown-item" data-accion="outlook" data-cid="{{ c.id }}" data-numero="{{ c.numero_formateado }}"
+                            data-email="{{ c.pagador_principal.email if c.pagador_principal }}"><i class="bi bi-envelope-paper"></i> Redactar correo</button></li>
+                {% if c.envios.count() == 0 %}
+                <li><hr class="dropdown-divider"></li>
+                <li><button class="dropdown-item text-danger" data-accion="eliminar-fila" data-cid="{{ c.id }}" data-numero="{{ c.numero_formateado }}"><i class="bi bi-trash"></i> Eliminar (libera número)</button></li>
+                {% else %}
+                <li><hr class="dropdown-divider"></li>
+                <li><button class="dropdown-item text-danger" data-accion="anular" data-cid="{{ c.id }}" data-numero="{{ c.numero_formateado }}"><i class="bi bi-x-octagon"></i> Anular (con motivo)</button></li>
+                {% endif %}
+              </ul>
+            </div>
+          </div>
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="10" class="text-center text-muted py-4">Sin cuentas{% if estado %} en estado {{ estado }}{% endif %}.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endblock %}

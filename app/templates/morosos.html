@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block title %}Morosos{% endblock %}
+{% block content %}
+<h3 class="mb-1">Morosos y pendientes</h3>
+<p class="text-muted small">Revisión de {{ (a.anio_cobro|int - 1) if a }}: quién pagó menos de lo cobrado y a quién nunca se le registró pago.
+Los valores de "Efect. pagado" se editan con un clic (para corregir el histórico). La nota se guarda sola. El botón <span class="badge bg-success">✓ pagó todo</span> marca al cliente como pagado completo de una vez; los casos especiales, con el lápiz: edita el valor real y deja la nota. El botón <span class="badge bg-secondary">no es moroso</span> cierra al que pagó de menos por un acuerdo: pide nota OBLIGATORIA (ej: "acuerdo interno, se descontó $20.000") y lo pasa a "Acuerdos internos", que sale igual en el Excel descargable.</p>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-3"><div class="card p-3 border-danger">
+    <div class="text-muted small">DEUDA {{ (a.anio_cobro|int - 1) if a }} (por cobrar)</div>
+    <div class="fs-4 fw-bold text-danger" id="tot-deuda">{{ deuda_tot|money }}</div>
+    <div class="small text-muted" id="n-deud">{{ deudores|length }} deudor(es)</div>
+  </div></div>
+  <div class="col-md-3"><div class="card p-3">
+    <div class="text-muted small">EFECT. PAGADO {{ (a.anio_cobro|int - 1) if a }}</div>
+    <div class="fs-4 fw-bold text-success" id="tot-pagado">{{ pag_ant_tot|money }}</div>
+    <div class="small text-muted">total registrado</div>
+  </div></div>
+  <div class="col-md-3"><div class="card p-3 border-success">
+    <div class="text-muted small">DESCONTADO {{ (a.anio_cobro|int - 1) if a }} (acuerdos internos)</div>
+    <div class="fs-4 fw-bold text-success" id="tot-desc">{{ descuento_tot|money }}</div>
+    <div class="small text-muted">{{ acuerdos|length }} acuerdo(s) — no son morosos</div>
+  </div></div>
+  <div class="col-md-3"><div class="card p-3">
+    <div class="text-muted small">SIN COBRO REGISTRADO {{ (a.anio_cobro|int - 1) if a }}</div>
+    <div class="fs-4 fw-bold">{{ n_sin }}</div>
+    <div class="small text-muted">¿se les olvidó cobrar? anota en la nota</div>
+  </div></div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header bg-white fw-semibold">Deudores {{ (a.anio_cobro|int - 1) if a }} — pagaron menos de lo cobrado</div>
+  <div class="table-responsive">
+  <table class="table table-sm table-hover mb-0">
+    <thead><tr><th>Cliente</th><th class="num">Cobrado {{ (a.anio_cobro|int - 1) if a }}</th>
+      <th class="num">Efect. pagado {{ (a.anio_cobro|int - 1) if a }}</th><th class="num">Falta</th><th class="text-center" style="width: 110px;" title="Un clic: marca lo cobrado como efectivamente pagado completo">Pago total</th>
+      <th class="text-center" style="width: 120px;" title="Cierra el moroso con nota obligatoria (acuerdo interno, descuento)">No moroso</th>
+      <th class="num">Pagado {{ a.anio_cobro if a }}</th><th>Estado {{ a.anio_cobro if a }}</th><th style="width: 320px;">Nota</th></tr></thead>
+    <tbody>
+    {% for c, pa, ef, falta, pact, est in deudores %}
+      <tr>
+        <td><a href="{{ url_for('main.cliente_detalle', cid=c.id) }}">{{ c.nombre }}</a></td>
+        <td class="num">{{ pa|money }}</td>
+        <td class="num">
+          <form class="d-inline" method="post" action="{{ url_for('main.cliente_cobrado_anterior', cid=c.id) }}">
+            <input class="form-control form-control-sm text-end cobant-input d-none" name="valor" type="number" step="1000" min="0" value="{{ '%d'|format(ef) }}">
+            <span class="cobant-text text-danger" role="button" title="Clic para editar">{{ ef|money }}</span>
+          </form>
+        </td>
+        <td class="num fw-bold text-danger falta-cell">{{ falta|money }}</td>
+        <td class="text-center">
+          <button type="button" class="btn btn-sm btn-outline-success pagotodo" data-cid="{{ c.id }}" data-falta="{{ '%d'|format(falta) }}"
+                  title="Marcar como pagado completo: {{ pa|money }}">✓ pagó todo</button>
+        </td>
+        <td class="text-center">
+          <button type="button" class="btn btn-sm btn-outline-secondary mcerrar" data-cid="{{ c.id }}"
+                  title="No es moroso: cierra con nota obligatoria y sale en el Excel como acuerdo">no es moroso</button>
+        </td>
+        <td class="num text-success">{% if pact %}{{ pact|money }}{% else %}·{% endif %}</td>
+        <td><span class="badge bg-{{ est[1] }}">{{ est[0] }}</span></td>
+        <td>
+          <form method="post" action="{{ url_for('main.cliente_moroso_nota', cid=c.id) }}">
+            <input class="form-control form-control-sm mnota-input" name="nota" value="{{ c.moroso_nota }}" placeholder="Ej: prometió pagar en... ya pagó todo...">
+          </form>
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="8" class="text-center text-muted py-4">Sin deudores registrados: todos los que pagaron cubrieron lo cobrado.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header bg-white fw-semibold">Acuerdos internos / descontados {{ (a.anio_cobro|int - 1) if a }} <span class="text-muted fw-normal small">(pagaron de menos por acuerdo — no son morosos; salen así en el Excel)</span></div>
+  <div class="table-responsive">
+  <table class="table table-sm table-hover mb-0">
+    <thead><tr><th>Cliente</th><th class="num">Cobrado</th><th class="num">Efect. pagado</th>
+      <th class="num">Descontado</th><th>Estado {{ a.anio_cobro if a }}</th><th style="width: 320px;">Nota</th><th class="text-center" style="width: 110px;"></th></tr></thead>
+    <tbody>
+    {% for c, pa, ef, desc, est in acuerdos %}
+      <tr>
+        <td><a href="{{ url_for('main.cliente_detalle', cid=c.id) }}">{{ c.nombre }}</a></td>
+        <td class="num">{{ pa|money }}</td>
+        <td class="num">
+          <form class="d-inline" method="post" action="{{ url_for('main.cliente_cobrado_anterior', cid=c.id) }}">
+            <input class="form-control form-control-sm text-end cobant-input d-none" name="valor" type="number" step="1000" min="0" value="{{ '%d'|format(ef) }}">
+            <span class="cobant-text text-success" role="button" title="Clic para editar">{{ ef|money }}</span>
+          </form>
+        </td>
+        <td class="num fw-bold text-success">{{ desc|money }}</td>
+        <td><span class="badge bg-{{ est[1] }}">{{ est[0] }}</span></td>
+        <td>
+          <form method="post" action="{{ url_for('main.cliente_moroso_nota', cid=c.id) }}">
+            <input class="form-control form-control-sm mnota-input" name="nota" value="{{ c.moroso_nota }}" placeholder="acuerdo interno, descuento por...">
+          </form>
+        </td>
+        <td class="text-center">
+          <button type="button" class="btn btn-sm btn-outline-warning mreabrir" data-cid="{{ c.id }}"
+                  title="Volver a marcarlo como moroso">↩ reabrir</button>
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="7" class="text-center text-muted py-4">Sin acuerdos registrados: todos los que pagaron de menos siguen como morosos.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header bg-white fw-semibold">Sin cobro registrado {{ (a.anio_cobro|int - 1) if a }} — ¿se les hizo trabajo y se les olvidó cobrar?</div>
+  <div class="table-responsive" style="max-height: 560px; overflow-y: auto;">
+  <table class="table table-sm table-hover mb-0">
+    <thead><tr><th>Cliente</th><th>Grupo</th><th class="num">Presupuesto {{ a.anio_cobro if a }}</th>
+      <th class="num" title="Lo que realmente pagó {{ (a.anio_cobro|int - 1) if a }} — clic para editar">Efect. pagado {{ (a.anio_cobro|int - 1) if a }}</th>
+      <th class="num">Pagado {{ a.anio_cobro if a }}</th><th>Estado {{ a.anio_cobro if a }}</th><th style="width: 320px;">Nota</th></tr></thead>
+    <tbody>
+    {% for c, pact, est in sin_cobro %}
+      <tr>
+        <td><a href="{{ url_for('main.cliente_detalle', cid=c.id) }}">{{ c.nombre }}</a></td>
+        <td class="small text-muted">{{ c.grupo.nombre if c.grupo }}</td>
+        <td class="num">{% if presup.get(c.id) %}{{ presup.get(c.id)|money }}{% endif %}</td>
+        <td class="num">
+          <form class="d-inline" method="post" action="{{ url_for('main.cliente_cobrado_anterior', cid=c.id) }}">
+            <input class="form-control form-control-sm text-end cobant-input d-none" name="valor" type="number" step="1000" min="0"
+                   value="{{ '%d'|format(c.cobrado_anterior_real) if c.cobrado_anterior_real else '' }}" placeholder="0">
+            <span class="cobant-text {{ 'text-success' if c.cobrado_anterior_real else 'text-muted' }}" role="button"
+                  title="Clic para editar">{{ c.cobrado_anterior_real|money if c.cobrado_anterior_real else '·' }}</span>
+          </form>
+        </td>
+        <td class="num text-success">{% if pact %}{{ pact|money }}{% else %}·{% endif %}</td>
+        <td><span class="badge bg-{{ est[1] }}">{{ est[0] }}</span></td>
+        <td>
+          <form method="post" action="{{ url_for('main.cliente_moroso_nota', cid=c.id) }}">
+            <input class="form-control form-control-sm mnota-input" name="nota" value="{{ c.moroso_nota }}" placeholder="Ej: no se le cobró por... / ya retirado...">
+          </form>
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="7" class="text-center text-muted py-4">Todos los activos tienen cobro registrado {{ (a.anio_cobro|int - 1) if a }}.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endblock %}

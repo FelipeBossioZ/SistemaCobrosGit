@@ -1,0 +1,1999 @@
+# -*- coding: utf-8 -*-
+"""Rutas web del Sistema de Cobros."""
+import io
+import os
+import re
+import sqlite3
+import unicodedata
+from datetime import date
+
+from flask import (Blueprint, render_template, request, redirect, url_for,
+                   flash, jsonify, send_file, current_app, Response)
+
+from .models import (db, Parametro, AnioCobro, GrupoFamiliar, Cliente,
+                     PresupuestoCliente, CuentaCobro, CuentaLinea, Envio,
+                     Ajuste, Pago, ESTADOS, TrabajoAdicional, saludo_de_cliente)
+from .pdf_generator import generar_pdf, ruta_pdf
+from . import rutas_comunes
+
+bp = Blueprint("main", __name__)
+
+
+def anio_actual():
+    a = AnioCobro.query.filter_by(activo=True).first()
+    if a is None:
+        a = AnioCobro.query.order_by(AnioCobro.anio_cobro.desc()).first()
+    return a
+
+
+def _rebase(ruta):
+    """Adapta rutas de OneDrive entre PCs (casa usa una letra, oficina otra).
+    Si la ruta guardada no existe en este PC pero pasa por una carpeta OneDrive
+    y existe el tramo equivalente bajo la raíz local de OneDrive, se reconstruye.
+    Si no hay equivalente existente, se conserva la original (se creará allí)."""
+    ruta = (ruta or "").strip()
+    if not ruta:
+        return ruta
+    try:
+        if os.path.isdir(ruta):
+            return ruta
+    except OSError:
+        pass
+    partes = [p for p in re.split(r"[\\/]+", ruta) if p]
+    for i, p in enumerate(partes):
+        if p.lower() == "onedrive":
+            resto = partes[i + 1:]
+            raices = [os.environ.get("OneDrive", ""),
+                      os.environ.get("OneDriveConsumer", ""),
+                      os.path.join(os.path.expanduser("~"), "OneDrive")]
+            for raiz in [r for r in raices if r]:
+                nueva = os.path.join(raiz, *resto)
+                try:
+                    if os.path.isdir(nueva):
+                        return nueva
+                except OSError:
+                    pass
+            break   # sin equivalente existente: no se especula
+    return ruta
+
+
+def _carpeta_pdfs():
+    """Carpeta donde se guardan los PDF (Parámetros; defecto Documentos\\Cuentas de Cobro)."""
+    carpeta = _rebase(Parametro.get("carpeta_pdfs", ""))
+    if not carpeta:
+        carpeta = _rebase(Parametro.get("carpeta_pdfs_envio", ""))
+    if not carpeta:
+        carpeta = os.path.join(os.path.expanduser("~"), "Documents", "Cuentas de Cobro")
+    os.makedirs(carpeta, exist_ok=True)
+    return carpeta
+
+
+def _carpeta_correos():
+    """Carpeta solo para los borradores .eml (parametrizable e independiente)."""
+    carpeta = _rebase(Parametro.get("carpeta_correos", ""))
+    if not carpeta:
+        return _carpeta_pdfs()
+    os.makedirs(carpeta, exist_ok=True)
+    return carpeta
+
+
+def _carpeta_imagenes():
+    """Carpeta para las imágenes de cuentas (WhatsApp); parametrizable e independiente.
+    Vacía = usa la carpeta de PDFs."""
+    carpeta = _rebase(Parametro.get("carpeta_imagenes", ""))
+    if not carpeta:
+        return _carpeta_pdfs()
+    os.makedirs(carpeta, exist_ok=True)
+    return carpeta
+
+
+def _slug_archivo(s):
+    """Nombre seguro para archivos: sin acentos ni caracteres raros."""
+    s = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode()
+    return re.sub(r"[^A-Za-z0-9]+", "_", s).strip("_") or "cliente"
+
+
+def _nombre_propio(s):
+    """'Ochoa Velasquez Rafael': mayúscula inicial en nombres y apellidos, con
+    partículas (de, del, la, y...) en minúscula salvo al inicio. Se aplica ANTES
+    del slug para que los PDF/quedas se llamen Ochoa_Velasquez_Rafael_..."""
+    particulas = {"de", "del", "la", "las", "los", "y", "e", "o", "u"}
+    palabras = (s or "").strip().split()
+    fuera = []
+    for i, p in enumerate(palabras):
+        if i > 0 and p.lower() in particulas:
+            fuera.append(p.lower())
+        else:
+            fuera.append(p.capitalize())
+    return " ".join(fuera)
+
+
+def _nombre_pdf(cuenta):
+    """Ochoa_Velasquez_Rafael_CdeC_26_001.pdf (pagador en nombre propio, luego CdeC + número)."""
+    pag = cuenta.pagador_principal
+    num = cuenta.numero_formateado.replace("-", "_")
+    return f"{_slug_archivo(_nombre_propio(pag.nombre if pag else ''))}_CdeC_{num}.pdf"
+
+
+def _numero_libre(a):
+    """Consecutivo real: el primero que NO exista ya. Se autorepara si OneDrive
+    dejó el contador atrasado (o si una copia de la BD llegó con cuentas nuevas)."""
+    usados = {n for (n,) in db.session.query(CuentaCobro.numero)
+              .filter(CuentaCobro.anio_cobro_id == a.id).all()}
+    n = max(a.numero_siguiente or 1, a.consecutivo_inicial or 1)
+    while n in usados:
+        n += 1
+    return n
+
+
+def _primer_nombre(cli):
+    """Primer nombre de pila del cliente (tras los 2 apellidos) para el saludo del correo."""
+    if cli is None:
+        return ""
+    if (getattr(cli, "trato", "") or "").strip().upper() == "SRS":
+        return ""
+    saludo = saludo_de_cliente(cli)
+    if saludo == "Señores":
+        return ""                       # empresas / ambiguo: saludo sin nombre
+    PARTICULAS = {"DE", "LA", "DEL", "LOS", "LAS", "SAN", "SANTA", "VON", "VAN", "DA", "DU"}
+    palabras = [w.strip(".,;") for w in (cli.nombre or "").split() if w.strip(".,;")]
+    palos = [w for w in palabras if w.upper() not in PARTICULAS]
+    pila = palos[2:] if len(palos) > 2 else palos
+    return (pila[0].title() if pila else "")
+
+
+def _cuerpo_correo(cuenta, pagador, extra=""):
+    """Cuerpo del correo (formato de la oficina). `extra` son líneas adicionales
+    (ej. avisos de declaraciones adjuntas o trabajos). Multilínea => verbos en plural."""
+    banco = (cuenta.anio.banco_info
+             or Parametro.get("banco_info", "")).strip()
+    extra = (extra or "").strip().replace("\r\n", "\n")
+    plural = "\n" in extra          # varias líneas = cuentas/declaraciones múltiples
+    nombre = _primer_nombre(pagador)
+    saludo = f"Cordial saludo {nombre}," if nombre else "Cordial saludo,"
+    if plural:
+        nums = [l.cuenta.numero_formateado for l in cuenta.lineas if l.estado == "ACTIVA"]
+        detalle = (f"Adjunto las cuentas de cobro números {', '.join(nums[:-1])} y {nums[-1]} "
+                   "correspondientes a las asesorías prestadas este año.") if len(nums) > 1 else \
+                  (f"Adjunto la cuenta de cobro número {nums[0]} correspondiente a la asesoría prestada este año."
+                   if nums else "")
+        aviso = "Tan pronto se efectúe el pago por favor nos notifican para asentar la cancelación de las cuentas de cobro."
+    else:
+        detalle = (f"Adjunto la cuenta de cobro número {cuenta.numero_formateado} "
+                   "correspondiente a la asesoría prestada este año.")
+        aviso = "Tan pronto se efectúe el pago por favor nos notifica para asentar la cancelación de la cuenta de cobro."
+    partes = [saludo, "", detalle]
+    if extra:
+        partes += [extra, ""]
+    partes += ["Se puede consignar o Transferir en:", "", banco, "", aviso, "",
+               "Cualquier inquietud con gusto la atenderemos."]
+    return "\n".join(partes)
+
+
+@bp.app_context_processor
+def inject_helpers():
+    def p(clave, defecto=""):
+        return Parametro.get(clave, defecto)
+    return dict(p=p, TrabajoAdicional=TrabajoAdicional)
+
+
+# ---------------- Dashboard ----------------
+@bp.route("/")
+def dashboard():
+    a = anio_actual()
+    if not a:
+        return render_template("sin_anio.html")
+    presup = db.session.query(db.func.coalesce(db.func.sum(PresupuestoCliente.valor), 0.0))\
+        .filter_by(anio_cobro=a.anio_cobro).scalar()
+    emitido = db.session.query(db.func.coalesce(db.func.sum(CuentaLinea.valor), 0.0))\
+        .join(CuentaCobro).filter(CuentaCobro.anio_cobro_id == a.id,
+                                  CuentaLinea.estado == "ACTIVA",
+                                  CuentaCobro.estado != "ANULADA").scalar()
+    pagado = db.session.query(db.func.coalesce(db.func.sum(Pago.valor), 0.0))\
+        .join(CuentaCobro).filter(CuentaCobro.anio_cobro_id == a.id,
+                                  CuentaCobro.estado != "ANULADA").scalar()
+    ajustes = db.session.query(db.func.coalesce(db.func.sum(Ajuste.valor), 0.0))\
+        .join(CuentaCobro).filter(CuentaCobro.anio_cobro_id == a.id,
+                                  CuentaCobro.estado != "ANULADA").scalar()
+
+    # clientes con presupuesto > 0 sin línea activa en ninguna cuenta
+    con_cuenta = {l.cliente_id for c in a.cuentas for l in c.lineas if l.estado == "ACTIVA"}
+    sin_cuenta = []
+    for p in PresupuestoCliente.query.filter_by(anio_cobro=a.anio_cobro).all():
+        if p.cliente.activo and p.valor > 0 and p.cliente.id not in con_cuenta:
+            sin_cuenta.append(p.cliente)
+    sin_cuenta.sort(key=lambda c: c.nombre)
+
+    cuentas = a.cuentas.order_by(CuentaCobro.numero).all()
+    return render_template("dashboard.html", a=a, presup=presup, emitido=emitido,
+                           pagado=pagado, ajustes=ajustes, cuentas=cuentas,
+                           sin_cuenta=sin_cuenta)
+
+
+# ---------------- Clientes ----------------
+@bp.route("/clientes")
+def clientes():
+    ver = request.args.get("ver", "activos")
+    query = Cliente.query
+    if ver == "inactivos":
+        query = query.filter_by(activo=False)
+    else:
+        query = query.filter_by(activo=True)
+    lista = query.order_by(Cliente.nombre).all()
+    if ver == "cobrables":
+        lista = [c for c in lista if c.puede_cobrarse]
+    a = anio_actual()
+    presup = {}
+    if a:
+        for p in PresupuestoCliente.query.filter_by(anio_cobro=a.anio_cobro):
+            presup[p.cliente_id] = p
+        # estado de cobro por cliente (para pintar el nombre en el listado):
+        # pagado > enviada > cobrada (cuenta existe) — según la cuenta más avanzada
+        # donde el cliente tenga línea ACTIVA
+        estados_cobro = {c.id: "cobrada" for c in Cliente.query.filter_by(activo=True)}
+        c_ids = {c.id: c for c in CuentaCobro.query
+                 .filter(CuentaCobro.anio_cobro_id == a.id,
+                         CuentaCobro.estado != "ANULADA")
+                 .order_by(CuentaCobro.id).all()}
+        lin_por_cliente = {}
+        for l in CuentaLinea.query.filter_by(estado="ACTIVA").all():
+            cta = c_ids.get(l.cuenta_id)
+            if cta:
+                lin_por_cliente.setdefault(l.cliente_id, []).append(cta)
+        for cli_id, ctas in lin_por_cliente.items():
+            if any(c.estado == "PAGADA" and c.saldo <= 0 for c in ctas):
+                estados_cobro[cli_id] = "pagada"
+            elif any(c.estado in ("ENVIADA", "PAGADA") for c in ctas):
+                estados_cobro[cli_id] = "enviada"
+    else:
+        estados_cobro = {}
+
+    # pagado real del año por cliente: pagos de sus cuentas prorrateados
+    # por el valor de cada línea (en grupos paga el pagador, cubre a todos)
+    pagado_actual = {}
+    if a:
+        c_ids_p = {c.id: c for c in CuentaCobro.query
+                   .filter(CuentaCobro.anio_cobro_id == a.id,
+                           CuentaCobro.estado != "ANULADA").all()}
+        lineas_por_cuenta = {}
+        for l in CuentaLinea.query.filter_by(estado="ACTIVA").all():
+            if l.cuenta_id in c_ids_p:
+                lineas_por_cuenta.setdefault(l.cuenta_id, []).append(l)
+        for pago in Pago.query.join(CuentaCobro).filter(
+                CuentaCobro.anio_cobro_id == a.id,
+                CuentaCobro.estado != "ANULADA").all():
+            ls = lineas_por_cuenta.get(pago.cuenta_id, [])
+            tot = sum(l.valor for l in ls)
+            if tot <= 0:
+                continue
+            for l in ls:
+                pagado_actual[l.cliente_id] = pagado_actual.get(l.cliente_id, 0.0) \
+                    + pago.valor * (l.valor / tot)
+    # correos (.eml) por cliente: los .eml se nombran SLUG-DEL-PAGADOR_CdeC_...,
+    # así que un cliente tiene correo si SU slug (o el de un grupo donde es pagador) está
+    n_correos = {}
+    carpeta = _carpeta_correos()
+    try:
+        for fn in os.listdir(carpeta):
+            if fn.lower().endswith(".eml"):
+                n_correos[os.path.splitext(fn)[0].upper()] = True
+    except OSError:
+        pass
+    correos = {}
+    for cli in lista:
+        slugs = [_slug_archivo(cli.nombre).upper()]
+        if cli.es_pagador and cli.grupo:
+            for m in cli.grupo.miembros:
+                slugs.append(_slug_archivo(m.nombre).upper())
+        n = sum(1 for k in n_correos if any(k.startswith(s + "_") for s in slugs))
+        if n:
+            correos[cli.id] = n
+    return render_template("clientes.html", clientes=lista, ver=ver,
+                           presup=presup, a=a, correos=correos,
+                           estados_cobro=estados_cobro, pagado_actual=pagado_actual,
+                           grupos=GrupoFamiliar.query.order_by(GrupoFamiliar.nombre))
+
+
+@bp.route("/clientes/importar-cobros-2025", methods=["POST"])
+def clientes_importar_cobros_2025():
+    """Lee el Excel del año anterior y guarda lo EFECTIVAMENTE cobrado por cliente."""
+    from .cobros_2025 import leer_cobros_2025
+    path = Parametro.get("excel_cobros_anterior", "") or rutas_comunes.excel_anterior_defecto()
+    if not os.path.isfile(path):
+        flash(f"No encontré el Excel del año anterior: {path}", "error")
+        return redirect(url_for("main.clientes"))
+    try:
+        datos = leer_cobros_2025(path)
+    except Exception as e:
+        flash(f"No pude leer el Excel: {e}", "error")
+        return redirect(url_for("main.clientes"))
+    n = 0
+    for cli in Cliente.query.all():
+        v = datos.get(cli.codigo)
+        if v:
+            cli.cobrado_anterior_real = round(v)
+            n += 1
+    db.session.commit()
+    flash(f"Pagos del año anterior actualizados para {n} clientes "
+          f"(desde {os.path.basename(path)})", "ok")
+    return redirect(url_for("main.clientes"))
+
+
+@bp.route("/clientes/<int:cid>/cobrado-anterior", methods=["POST"])
+def cliente_cobrado_anterior(cid):
+    """Edita a mano lo EFECTIVAMENTE pagado del año anterior (primer llenado)."""
+    from flask import jsonify
+    cli = db.get_or_404(Cliente, cid)
+    raw = (request.form.get("valor") or "").strip()
+    try:
+        cli.cobrado_anterior_real = float(raw) if raw else 0
+    except ValueError:
+        pass
+    db.session.commit()
+    return jsonify(ok=True, valor=float(cli.cobrado_anterior_real or 0))
+
+
+@bp.route("/clientes/<int:cid>/cobrado-todo", methods=["POST"])
+def cliente_cobrado_todo(cid):
+    """Un clic: lo efectivamente pagado del año anterior = todo lo cobrado."""
+    from flask import jsonify
+    cli = db.get_or_404(Cliente, cid)
+    pa = float(cli.cobrado_anterior or 0)
+    if pa <= 0:
+        return jsonify(ok=False, error="sin cobro registrado el año anterior")
+    cli.cobrado_anterior_real = pa
+    db.session.commit()
+    return jsonify(ok=True, valor=pa)
+
+
+@bp.route("/clientes/<int:cid>/moroso-cerrar", methods=["POST"])
+def cliente_moroso_cerrar(cid):
+    """Marca al deudor como NO moroso (acuerdo interno, descuento pactado...).
+    La nota es OBLIGATORIA: es el rastro que queda en /morosos y en el Excel."""
+    cli = db.get_or_404(Cliente, cid)
+    nota = (request.form.get("nota") or "").strip()
+    if not nota:
+        return jsonify(ok=False, error="La nota es obligatoria para cerrar el moroso")
+    cli.moroso_cerrado = True
+    cli.moroso_nota = nota[:300]
+    db.session.commit()
+    return jsonify(ok=True)
+
+
+@bp.route("/clientes/<int:cid>/moroso-reabrir", methods=["POST"])
+def cliente_moroso_reabrir(cid):
+    """Deshace el cierre: el cliente vuelve a la lista de morosos."""
+    cli = db.get_or_404(Cliente, cid)
+    cli.moroso_cerrado = False
+    db.session.commit()
+    return jsonify(ok=True)
+
+
+@bp.route("/clientes/<int:cid>/moroso-nota", methods=["POST"])
+def cliente_moroso_nota(cid):
+    """Nota del módulo de morosos (historia del cliente con el cobro)."""
+    from flask import jsonify
+    cli = db.get_or_404(Cliente, cid)
+    cli.moroso_nota = (request.form.get("nota") or "").strip()[:300]
+    db.session.commit()
+    return jsonify(ok=True)
+
+
+@bp.route("/morosos")
+def morosos():
+    """Deudores del año anterior y clientes sin cobro registrado, para revisar
+    uno a uno quién pagó, quién debe y a quién se le olvidó cobrar."""
+    a = anio_actual()
+    if not a:
+        flash("No hay año activo", "error")
+        return redirect(url_for("main.dashboard"))
+    # pagado real del año actual por cliente (prorrateado entre líneas del grupo)
+    pag_act = {}
+    c_ids = {c.id: c for c in CuentaCobro.query
+             .filter(CuentaCobro.anio_cobro_id == a.id,
+                     CuentaCobro.estado != "ANULADA").all()}
+    lin_cta = {}
+    for l in CuentaLinea.query.filter_by(estado="ACTIVA").all():
+        if l.cuenta_id in c_ids:
+            lin_cta.setdefault(l.cuenta_id, []).append(l)
+    for pago in Pago.query.join(CuentaCobro).filter(
+            CuentaCobro.anio_cobro_id == a.id,
+            CuentaCobro.estado != "ANULADA").all():
+        ls = lin_cta.get(pago.cuenta_id, [])
+        tot = sum(l.valor for l in ls)
+        if tot <= 0:
+            continue
+        for l in ls:
+            pag_act[l.cliente_id] = pag_act.get(l.cliente_id, 0.0) + pago.valor * (l.valor / tot)
+    # estado del año actual por cliente (peor no: el mejor estado alcanzado)
+    sev = {"BORRADOR": 1, "ENVIADA": 2, "PAGADA": 3}
+    ETAQ = {0: ("sin cuenta", "light text-dark"), 1: ("BORRADOR", "secondary"),
+            2: ("ENVIADA", "warning"), 3: ("PAGADA", "success")}
+    est_cli = {}
+    for cta_id, ls in lin_cta.items():
+        cta = c_ids[cta_id]
+        nivel = sev.get(cta.estado, 0)
+        for l in ls:
+            if nivel > est_cli.get(l.cliente_id, (0, ""))[0]:
+                est_cli[l.cliente_id] = (nivel, cta.numero_formateado)
+    estados = {cid_: ETAQ[n[0]] for cid_, n in est_cli.items()}
+    niveles = {cid_: n[0] for cid_, n in est_cli.items()}
+
+    presup = {p.cliente_id: p.valor for p in
+              PresupuestoCliente.query.filter_by(anio_cobro=a.anio_cobro).all()}
+
+    deudores, acuerdos, sin_cobro = [], [], []
+    deuda_tot = 0.0
+    descuento_tot = 0.0
+    pag_ant_tot = 0.0
+    for c in Cliente.query.filter_by(activo=True).order_by(Cliente.nombre).all():
+        pa = float(c.cobrado_anterior or 0)        # lo que se le cobró el año pasado
+        ef = float(c.cobrado_anterior_real or 0)   # lo que realmente pagó el año pasado
+        pag_ant_tot += ef
+        if pa > 0 and ef < pa - 0.5:
+            falta = pa - ef
+            if c.moroso_cerrado:
+                # acuerdo interno / descuento pactado: no es moroso, pero deja rastro
+                acuerdos.append((c, pa, ef, falta, estados.get(c.id, ETAQ[0])))
+                descuento_tot += falta
+            else:
+                deudores.append((c, pa, ef, falta, pag_act.get(c.id, 0.0), estados.get(c.id, ETAQ[0])))
+                deuda_tot += falta
+        elif pa == 0:
+            sin_cobro.append((c, pag_act.get(c.id, 0.0), estados.get(c.id, ETAQ[0])))
+    sin_cobro.sort(key=lambda t: (niveles.get(t[0].id, 0) != 0, t[0].nombre))  # sin cuenta 2026 primero
+    return render_template("morosos.html", a=a, deudores=deudores, acuerdos=acuerdos,
+                           sin_cobro=sin_cobro, deuda_tot=deuda_tot,
+                           descuento_tot=descuento_tot, pag_ant_tot=pag_ant_tot,
+                           n_sin=len(sin_cobro), presup=presup)
+
+
+@bp.route("/clientes/<int:cid>/correo")
+def cliente_correo(cid):
+    """Redactar correo desde el listado: MISMA función que el botón 'Redactar correo'
+    de la cuenta. Toma la cuenta vigente del cliente (la más reciente no anulada),
+    genera PDF + .eml de borrador de Outlook y lo descarga al instante (también
+    queda en la carpeta de correos). Sin cuenta que cobrar → avisa."""
+    cli = db.get_or_404(Cliente, cid)
+    destino = request.referrer or url_for("main.clientes")
+    a = anio_actual()
+    cuenta = None
+    if a:
+        # la cuenta vigente: la más reciente no anulada donde el cliente tiene línea ACTIVA
+        lin = (CuentaLinea.query
+               .filter(CuentaLinea.cliente_id == cli.id, CuentaLinea.estado == "ACTIVA")
+               .join(CuentaCobro)
+               .filter(CuentaCobro.anio_cobro_id == a.id, CuentaCobro.estado != "ANULADA")
+               .order_by(CuentaCobro.id.desc()).first())
+        cuenta = lin.cuenta if lin else None
+    if not cuenta:
+        flash(f"{cli.nombre} no tiene cuenta de cobro por cobrar este año. "
+              f"Primero genera la cuenta (rayo ⚡ o desde su detalle).", "error")
+        return redirect(destino)
+    pagador = cuenta.pagador_principal
+    if not pagador or not (pagador.email or "").strip():
+        flash(f"El pagador {pagador.nombre if pagador else '(sin pagador)'} no tiene correo "
+              f"guardado en su ficha. Regístralo y vuelve a intentar.", "error")
+        return redirect(destino)
+    carpeta = _carpeta_correos()
+    ruta_eml = _generar_eml(cuenta, carpeta)
+    if cuenta.estado == "BORRADOR":
+        cuenta.estado = "ENVIADA"
+    if not cuenta.envios.first():
+        db.session.add(Envio(cuenta_id=cuenta.id, medio="Correo", fecha=date.today(),
+                             nota=f"Borrador .eml generado en {carpeta} (para {pagador.email})"))
+    db.session.commit()
+    return send_file(ruta_eml, as_attachment=True,
+                     download_name=os.path.basename(ruta_eml))
+
+
+@bp.route("/clientes/<int:cid>/decl", methods=["POST"])
+def cliente_decl(cid):
+    """Scanner de declaraciones: con select guarda ese valor; sin él, cicla al siguiente."""
+    cli = db.get_or_404(Cliente, cid)
+    vals = ("", "NO_OBLIGADO", "PRESENTADA")
+    nuevo = request.form.get("decl")
+    if nuevo in vals:
+        cli.decl_renta = nuevo
+    else:
+        actual = cli.decl_renta if cli.decl_renta in vals else ""
+        cli.decl_renta = vals[(vals.index(actual) + 1) % 3]
+    db.session.commit()
+    if request.accept_mimetypes.best == "application/json":
+        return jsonify(ok=True, decl=cli.decl_renta, cobrable=cli.puede_cobrarse,
+                       estado=cli.estado_cobro_grupo)
+    flash(f"{cli.nombre}: {Cliente.DECL_ETIQUETAS.get(cli.decl_renta, cli.decl_renta)}", "ok")
+    return redirect(request.referrer or url_for("main.clientes"))
+
+
+@bp.route("/clientes/<int:cid>/decl-maestro", methods=["POST"])
+def cliente_decl_maestro(cid):
+    """Importa el estado de la renta AG-2025 desde el Sistema Maestro
+    (obligaciones RENTA con scanner_estado='PRESENTADA'). Si el cliente es de
+    grupo, revisa a todo el grupo (cubre el caso empresa PJ + familiares)."""
+    cli = db.get_or_404(Cliente, cid)
+    ruta = _ruta_maestro_activa()
+    if not ruta or not os.path.isdir(ruta):
+        flash("Configura la carpeta del Sistema Maestro en Parámetros (Carpeta del Sistema Maestro).", "error")
+        return redirect(request.referrer or url_for("main.clientes"))
+    db_maestro = os.path.join(ruta, "data", "sistema_maestro_v4.db")
+    if not os.path.isfile(db_maestro):
+        flash(f"No encontré la BD del maestro: {db_maestro}", "error")
+        return redirect(request.referrer or url_for("main.clientes"))
+    con = sqlite3.connect(db_maestro)
+    try:
+        filas = con.execute(
+            "SELECT nit FROM obligaciones "
+            "WHERE impuesto LIKE 'RENTA%' AND periodo LIKE 'AG-2025%' "
+            "AND scanner_estado = 'PRESENTADA' AND nit IS NOT NULL").fetchall()
+    finally:
+        con.close()
+    nits = {str(n[0]).strip() for n in filas if n[0]}
+    if cli.grupo_id:
+        objetivo = [m for m in cli.grupo.miembros if m.activo]
+    else:
+        objetivo = [cli]
+    tocados = []
+    for m in objetivo:
+        if (m.nit or "").strip() in nits and m.decl_renta != "PRESENTADA":
+            m.decl_renta = "PRESENTADA"
+            tocados.append(m.nombre)
+    db.session.commit()
+    if tocados:
+        flash(f"Maestro: marcadas PRESENTADA las rentas de: {', '.join(tocados)}.", "ok")
+    else:
+        flash(f"El maestro no tiene renta AG-2025 presentada para {'el grupo de ' + cli.nombre if cli.grupo_id else cli.nombre}.", "error")
+    return redirect(request.referrer or url_for("main.clientes"))
+
+
+@bp.route("/clientes/sync-maestro", methods=["POST"])
+def clientes_sync_maestro():
+    """Trae del Sistema Maestro las rentas AG-2025 que su scanner ya marcó como
+    PRESENTADA y actualiza a todos los clientes de una vez (cruce por NIT)."""
+    ruta = _ruta_maestro_activa()
+    if not ruta or not os.path.isdir(ruta):
+        flash("Configura la carpeta del Sistema Maestro en Parámetros.", "error")
+        return redirect(request.referrer or url_for("main.clientes"))
+    db_maestro = os.path.join(ruta, "data", "sistema_maestro_v4.db")
+    if not os.path.isfile(db_maestro):
+        flash(f"No encontré la BD del maestro: {db_maestro}", "error")
+        return redirect(request.referrer or url_for("main.clientes"))
+    con = sqlite3.connect(db_maestro)
+    try:
+        filas = con.execute(
+            "SELECT nit FROM obligaciones "
+            "WHERE impuesto LIKE 'RENTA%' AND periodo LIKE 'AG-2025%' "
+            "AND scanner_estado = 'PRESENTADA' AND nit IS NOT NULL").fetchall()
+    finally:
+        con.close()
+    nits = {str(n[0]).strip() for n in filas if n[0]}
+    tocados = 0
+    for cli in Cliente.query.all():
+        if (cli.nit or "").strip() in nits and cli.decl_renta != "PRESENTADA":
+            cli.decl_renta = "PRESENTADA"
+            tocados += 1
+    db.session.commit()
+    flash(f"Maestro: {tocados} cliente(s) quedaron con renta PRESENTADA (cruce por NIT).", "ok")
+    return redirect(request.referrer or url_for("main.clientes"))
+
+
+@bp.route("/clientes/<int:cid>/cuenta-expresa", methods=["POST"])
+def cliente_cuenta_expresa(cid):
+    """Un clic: crea la cuenta con lo presupuestado (a toda la familia si el cliente
+    es pagador de grupo) y guarda el PDF en la carpeta de Parámetros."""
+    a = anio_actual()
+    cli = db.get_or_404(Cliente, cid)
+    destino = request.referrer or url_for("main.clientes")
+    if not a:
+        flash("No hay año activo", "error")
+        return redirect(destino)
+    ya = (CuentaLinea.query.join(CuentaCobro)
+          .filter(CuentaLinea.cliente_id == cli.id,
+                  CuentaCobro.anio_cobro_id == a.id,
+                  CuentaLinea.estado == "ACTIVA",
+                  CuentaCobro.estado != "ANULADA").first())
+    if ya:
+        # ya está en una cuenta BORRADOR sin .eml → complétala: PDF + borrador de Outlook
+        yacuenta = ya.cuenta
+        if yacuenta.estado == "BORRADOR" and not yacuenta.envios.first():
+            pagador = yacuenta.pagador_principal
+            if pagador and (pagador.email or "").strip():
+                ccorreos = _carpeta_correos()
+                _generar_eml(yacuenta, ccorreos)
+                db.session.add(Envio(cuenta_id=yacuenta.id, medio="Correo", fecha=date.today(),
+                                     nota=f"Borrador .eml generado en {ccorreos} (para {pagador.email})"))
+                yacuenta.estado = "ENVIADA"
+                db.session.commit()
+                flash(f"{cli.nombre} ya estaba en la cuenta {yacuenta.numero_formateado} (BORRADOR). "
+                      f"La completé: PDF y borrador de Outlook (.eml) listos en {ccorreos}", "ok")
+            else:
+                flash(f"{cli.nombre} ya está en la cuenta BORRADOR {yacuenta.numero_formateado}, "
+                      f"pero el pagador no tiene correo guardado en su ficha.", "error")
+        else:
+            sobre = " (con borrador de Outlook ya generado: usa el sobre ✉)" if yacuenta.envios.first() else ""
+            flash(f"{cli.nombre} ya está en la cuenta {yacuenta.numero_formateado} de este año{sobre}", "error")
+        return redirect(destino)
+    miembros = ([m for m in cli.grupo.miembros if m.activo]
+                if cli.es_pagador and cli.grupo_id else [cli])
+    lineas = []
+    for m in miembros:
+        p = PresupuestoCliente.query.filter_by(cliente_id=m.id, anio_cobro=a.anio_cobro).first()
+        if not p or p.valor <= 0:
+            flash(f"{m.nombre} no tiene presupuesto {a.anio_cobro}. Cuenta no creada.", "error")
+            return redirect(destino)
+        lineas.append((m, p.valor))
+    cuenta = CuentaCobro(anio_cobro_id=a.id, numero=_numero_libre(a),
+                         fecha=date.today(), estado="BORRADOR")
+    cuenta.pagador_cliente_id = cli.id
+    db.session.add(cuenta)
+    db.session.flush()
+    for m, v in lineas:
+        db.session.add(CuentaLinea(cuenta=cuenta, cliente_id=m.id, valor=v))
+    a.numero_siguiente = cuenta.numero + 1
+    db.session.commit()
+    carpeta = _carpeta_pdfs()
+    ruta = os.path.join(carpeta, _nombre_pdf(cuenta))
+    generar_pdf(cuenta, ruta)
+    total = sum(v for _, v in lineas)
+    # expreso completo: si el pagador tiene correo, deja también el borrador .eml listo
+    pagador = cuenta.pagador_principal
+    base = f"Cuenta {cuenta.numero_formateado} creada ($ {total:,.0f}) y PDF en: {ruta}"
+    if pagador and (pagador.email or "").strip():
+        ccorreos = _carpeta_correos()
+        _generar_eml(cuenta, ccorreos)
+        db.session.add(Envio(cuenta_id=cuenta.id, medio="Correo", fecha=date.today(),
+                             nota=f"Borrador .eml generado en {ccorreos} (para {pagador.email})"))
+        cuenta.estado = "ENVIADA"
+        db.session.commit()
+        flash(base + f". Borrador de Outlook (.eml) listo en {ccorreos}", "ok")
+    else:
+        flash(base + ". El pagador no tiene correo guardado: solo quedó el PDF.", "ok")
+    return redirect(destino)
+
+
+@bp.route("/clientes/<int:cid>/trabajo-nuevo", methods=["POST"])
+def cliente_trabajo_nuevo(cid):
+    """Registra un trabajo adicional hecho al cliente (requerimiento, consulta, etc.)."""
+    cli = db.get_or_404(Cliente, cid)
+    desc = (request.form.get("descripcion") or "").strip()
+    if not desc:
+        flash("Describe el trabajo adicional", "error")
+    else:
+        a = anio_actual()
+        val = (request.form.get("valor") or "").strip().replace(".", "").replace(",", ".")
+        try:
+            val = float(val) if val else 0.0
+        except ValueError:
+            val = 0.0
+        db.session.add(TrabajoAdicional(
+            cliente_id=cli.id, descripcion=desc, valor=val,
+            anio_cobro=a.anio_cobro if a else date.today().year))
+        db.session.commit()
+        flash(f"Trabajo adicional registrado para {cli.nombre}", "ok")
+    return redirect(request.referrer or url_for("main.cliente_detalle", cid=cid))
+
+
+@bp.route("/trabajos/<int:tid>/estado", methods=["POST"])
+def trabajo_estado(tid):
+    """Cicla PENDIENTE -> COBRADO -> PENDIENTE (o fija con select)."""
+    t = db.get_or_404(TrabajoAdicional, tid)
+    nuevo = request.form.get("estado")
+    if nuevo in ("PENDIENTE", "COBRADO"):
+        t.estado = nuevo
+    else:
+        t.estado = "PENDIENTE" if t.estado == "COBRADO" else "COBRADO"
+    db.session.commit()
+    if request.accept_mimetypes.best == "application/json":
+        return jsonify(ok=True, estado=t.estado)
+    return redirect(request.referrer or url_for("main.cliente_detalle", cid=t.cliente_id))
+
+
+@bp.route("/trabajos/<int:tid>/eliminar", methods=["POST"])
+def trabajo_eliminar(tid):
+    t = db.get_or_404(TrabajoAdicional, tid)
+    cid = t.cliente_id
+    db.session.delete(t)
+    db.session.commit()
+    flash("Trabajo adicional eliminado", "ok")
+    return redirect(request.referrer or url_for("main.cliente_detalle", cid=cid))
+
+
+@bp.route("/grupos/<int:gid>/cuenta-expresa", methods=["POST"])
+def grupo_cuenta_expresa(gid):
+    """Un clic desde Grupos: crea la cuenta de todo el grupo (miembros activos
+    con presupuesto) a nombre del pagador del grupo, y deja el PDF en la carpeta."""
+    a = anio_actual()
+    g = db.get_or_404(GrupoFamiliar, gid)
+    destino = request.referrer or url_for("main.grupos")
+    if not a:
+        flash("No hay año activo", "error")
+        return redirect(destino)
+    miembros = [m for m in g.miembros if m.activo]
+    if not miembros:
+        flash(f"El grupo {g.nombre} no tiene miembros activos", "error")
+        return redirect(destino)
+    ya = (CuentaLinea.query.join(CuentaCobro)
+          .filter(CuentaLinea.cliente_id.in_([m.id for m in miembros]),
+                  CuentaCobro.anio_cobro_id == a.id,
+                  CuentaLinea.estado == "ACTIVA",
+                  CuentaCobro.estado != "ANULADA").first())
+    if ya:
+        flash(f"Algún miembro del grupo ya está en la cuenta {ya.cuenta.numero_formateado} de este año", "error")
+        return redirect(destino)
+    lineas = []
+    for m in miembros:
+        p = PresupuestoCliente.query.filter_by(cliente_id=m.id, anio_cobro=a.anio_cobro).first()
+        if not p or p.valor <= 0:
+            flash(f"{m.nombre} no tiene presupuesto {a.anio_cobro}. Cuenta no creada.", "error")
+            return redirect(destino)
+        lineas.append((m, p.valor))
+    pagador = g.pagador or miembros[0]
+    cuenta = CuentaCobro(anio_cobro_id=a.id, numero=_numero_libre(a),
+                         fecha=date.today(), estado="BORRADOR")
+    cuenta.pagador_cliente_id = pagador.id
+    db.session.add(cuenta)
+    db.session.flush()
+    for m, v in lineas:
+        db.session.add(CuentaLinea(cuenta=cuenta, cliente_id=m.id, valor=v))
+    a.numero_siguiente = cuenta.numero + 1
+    db.session.commit()
+    carpeta = _carpeta_pdfs()
+    ruta = os.path.join(carpeta, _nombre_pdf(cuenta))
+    generar_pdf(cuenta, ruta)
+    total = sum(v for _, v in lineas)
+    # expreso completo: si el pagador tiene correo, deja también el borrador .eml listo
+    pagador = cuenta.pagador_principal
+    base = f"Cuenta {cuenta.numero_formateado} del grupo {g.nombre} creada ($ {total:,.0f}) y PDF en: {ruta}"
+    if pagador and (pagador.email or "").strip():
+        ccorreos = _carpeta_correos()
+        _generar_eml(cuenta, ccorreos)
+        db.session.add(Envio(cuenta_id=cuenta.id, medio="Correo", fecha=date.today(),
+                             nota=f"Borrador .eml generado en {ccorreos} (para {pagador.email})"))
+        cuenta.estado = "ENVIADA"
+        db.session.commit()
+        flash(base + f". Borrador de Outlook (.eml) listo en {ccorreos}", "ok")
+    else:
+        flash(base + ". El pagador no tiene correo guardado: solo quedó el PDF.", "ok")
+    return redirect(destino)
+
+
+@bp.route("/clientes/nuevo", methods=["GET", "POST"])
+def cliente_nuevo():
+    a = anio_actual()
+    if request.method == "POST":
+        f = request.form
+        codigo_max = db.session.query(db.func.max(Cliente.codigo)).scalar() or 0
+        raw_cod = (f.get("codigo") or "").strip()
+        try:
+            codigo = int(raw_cod) if raw_cod else codigo_max + 1
+        except ValueError:
+            flash("El código debe ser numérico", "error")
+            return render_template("cliente_form.html", cli=None, a=a,
+                                   codigo_sugerido=codigo_max + 1,
+                                   grupos=GrupoFamiliar.query.order_by(GrupoFamiliar.nombre)), 400
+        if db.session.query(Cliente.id).filter_by(codigo=codigo).first():
+            flash(f"El código {codigo} ya existe: cliente no creado (revise el número)", "error")
+            return render_template("cliente_form.html", cli=None, a=a,
+                                   codigo_sugerido=codigo_max + 1,
+                                   grupos=GrupoFamiliar.query.order_by(GrupoFamiliar.nombre)), 400
+        cli = Cliente(
+            codigo=codigo,
+            nombre=f["nombre"].strip().upper(),
+            tipo=f.get("tipo", "PN"),
+            trato=f.get("trato", "") if f.get("trato") in ("", "SR", "SRA") else "",
+            nit=f.get("nit", "").strip(),
+            dv=f.get("dv", "").strip(),
+            ciudad=f.get("ciudad", "MEDELLÍN").strip() or "MEDELLÍN",
+            direccion=f.get("direccion", "").strip(),
+            telefonos=f.get("telefonos", "").strip(),
+            email=f.get("email", "").strip(),
+            grupo_id=int(f["grupo_id"]) if f.get("grupo_id") else None,
+            nota=f.get("nota", "").strip(),
+        )
+        db.session.add(cli)
+        db.session.flush()
+        if a:
+            db.session.add(PresupuestoCliente(cliente_id=cli.id, anio_cobro=a.anio_cobro,
+                                              valor=float(f.get("valor") or 0)))
+        db.session.commit()
+        flash("Cliente creado", "ok")
+        return redirect(url_for("main.clientes"))
+    codigo_max = db.session.query(db.func.max(Cliente.codigo)).scalar() or 0
+    return render_template("cliente_form.html", cli=None, a=a,
+                           codigo_sugerido=codigo_max + 1,
+                           grupos=GrupoFamiliar.query.order_by(GrupoFamiliar.nombre))
+
+
+@bp.route("/clientes/<int:cid>")
+def cliente_detalle(cid):
+    cli = db.get_or_404(Cliente, cid)
+    a = anio_actual()
+    presup = PresupuestoCliente.query.filter_by(cliente_id=cid).all()
+    lineas = CuentaLinea.query.filter_by(cliente_id=cid).all()
+    historial = []
+    for l in lineas:
+        c = l.cuenta
+        historial.append({
+            "anio": c.anio.anio_cobro, "numero": c.numero_formateado, "cuenta_id": c.id,
+            "fecha": c.fecha, "valor": l.valor, "estado_cuenta": c.estado,
+            "estado_linea": l.estado,
+            "pagos": [{"fecha": p.fecha, "valor": p.valor, "forma": p.forma} for p in c.pagos],
+            "ajustes": sum(x.valor for x in c.ajustes),
+            "total": c.total, "saldo": c.saldo,
+            "envios": [{"fecha": e.fecha, "medio": e.medio} for e in c.envios],
+        })
+    historial.sort(key=lambda h: (h["anio"], h["numero"]))
+    return render_template("cliente_detalle.html", cli=cli, presup=presup,
+                           historial=historial, a=a,
+                           grupos=GrupoFamiliar.query.order_by(GrupoFamiliar.nombre))
+
+
+@bp.route("/clientes/<int:cid>/editar", methods=["GET", "POST"])
+def cliente_editar(cid):
+    cli = db.get_or_404(Cliente, cid)
+    a = anio_actual()
+    if request.method == "POST":
+        f = request.form
+        cli.nombre = f["nombre"].strip().upper()
+        cli.tipo = f.get("tipo", "PN")
+        cli.trato = f.get("trato", "") if f.get("trato") in ("", "SR", "SRA") else ""
+        cli.nit = f.get("nit", "").strip()
+        cli.dv = f.get("dv", "").strip()
+        cli.ciudad = f.get("ciudad", "").strip()
+        cli.direccion = f.get("direccion", "").strip()
+        cli.telefonos = f.get("telefonos", "").strip()
+        cli.email = f.get("email", "").strip()
+        cli.grupo_id = int(f["grupo_id"]) if f.get("grupo_id") else None
+        cli.es_pagador = bool(f.get("es_pagador"))
+        cli.nota = f.get("nota", "").strip()
+        cli.activo = bool(f.get("activo"))
+        valor = f.get("valor")
+        if a and valor not in (None, ""):
+            p = PresupuestoCliente.query.filter_by(cliente_id=cli.id, anio_cobro=a.anio_cobro).first()
+            if p is None:
+                p = PresupuestoCliente(cliente_id=cli.id, anio_cobro=a.anio_cobro)
+                db.session.add(p)
+            p.valor = float(valor or 0)
+        if cli.es_pagador and cli.grupo_id:
+            Cliente.query.filter(Cliente.grupo_id == cli.grupo_id,
+                                 Cliente.id != cli.id).update({"es_pagador": False})
+        db.session.commit()
+        flash("Cliente actualizado", "ok")
+        return redirect(url_for("main.cliente_detalle", cid=cli.id))
+    presup_actual = None
+    if a:
+        presup_actual = PresupuestoCliente.query.filter_by(cliente_id=cli.id, anio_cobro=a.anio_cobro).first()
+    return render_template("cliente_form.html", cli=cli, a=a, presup_actual=presup_actual,
+                           grupos=GrupoFamiliar.query.order_by(GrupoFamiliar.nombre))
+
+
+# ---------------- Grupos familiares ----------------
+@bp.route("/grupos")
+def grupos():
+    return render_template("grupos.html",
+                           grupos=GrupoFamiliar.query.order_by(GrupoFamiliar.nombre).all(),
+                           clientes_sin_grupo=Cliente.query.filter_by(grupo_id=None, activo=True)
+                           .order_by(Cliente.nombre).all())
+
+
+@bp.route("/grupos/nuevo", methods=["POST"])
+def grupo_nuevo():
+    nombre = request.form.get("nombre", "").strip()
+    if nombre:
+        g = GrupoFamiliar(nombre=nombre.upper())
+        db.session.add(g)
+        db.session.commit()
+        flash("Grupo creado", "ok")
+    return redirect(url_for("main.grupos"))
+
+
+@bp.route("/grupos/<int:gid>/renombrar", methods=["POST"])
+def grupo_renombrar(gid):
+    """Cambia el nombre visible del grupo (ej: G11 -> FAMILIA RESTREPO)."""
+    g = db.session.get(GrupoFamiliar, gid)
+    nombre = request.form.get("nombre", "").strip().upper()
+    if g and nombre:
+        viejo = g.nombre
+        g.nombre = nombre
+        db.session.commit()
+        flash(f'Grupo "{viejo}" renombrado a "{nombre}"', "ok")
+    return redirect(url_for("main.grupos"))
+
+
+@bp.route("/grupos/<int:gid>/agregar", methods=["POST"])
+def grupo_agregar(gid):
+    data = request.get_json(silent=True) or {}
+    cid = int(data.get("cliente_id") or request.form.get("cliente_id") or 0)
+    cli = db.session.get(Cliente, cid)
+    g = db.session.get(GrupoFamiliar, gid)
+    if cli and g:
+        cli.grupo_id = g.id
+        if data.get("pagador") or request.form.get("pagador"):
+            Cliente.query.filter(Cliente.grupo_id == g.id).update({"es_pagador": False})
+            cli.es_pagador = True
+        db.session.commit()
+    return redirect(url_for("main.grupos"))
+
+
+@bp.route("/grupos/<int:gid>/quitar/<int:cid>", methods=["POST"])
+def grupo_quitar(gid, cid):
+    cli = db.session.get(Cliente, cid)
+    if cli:
+        cli.grupo_id = None
+        cli.es_pagador = False
+        db.session.commit()
+    return redirect(url_for("main.grupos"))
+
+
+@bp.route("/grupos/<int:gid>/pagador/<int:cid>", methods=["POST"])
+def grupo_pagador(gid, cid):
+    Cliente.query.filter(Cliente.grupo_id == gid).update({"es_pagador": False})
+    cli = db.session.get(Cliente, cid)
+    if cli:
+        cli.es_pagador = True
+    db.session.commit()
+    return redirect(url_for("main.grupos"))
+
+
+@bp.route("/grupos/<int:gid>/eliminar", methods=["POST"])
+def grupo_eliminar(gid):
+    g = db.session.get(GrupoFamiliar, gid)
+    if g:
+        Cliente.query.filter_by(grupo_id=gid).update({"grupo_id": None, "es_pagador": False})
+        db.session.delete(g)
+        db.session.commit()
+        flash("Grupo eliminado", "ok")
+    return redirect(url_for("main.grupos"))
+
+
+# ---------------- Cuentas de cobro ----------------
+@bp.route("/cuentas")
+def cuentas():
+    a = anio_actual()
+    if not a:
+        return redirect(url_for("main.dashboard"))
+    estado = request.args.get("estado", "")
+    query = a.cuentas
+    if estado:
+        query = query.filter_by(estado=estado)
+    return render_template("cuentas.html", a=a,
+                           cuentas=query.order_by(CuentaCobro.numero).all(),
+                           estado=estado, estados=ESTADOS)
+
+
+def _cuenta_activa_de(cliente_id, anio_id):
+    """Línea ACTIVA del cliente en una cuenta NO anulada del año (None si no existe).
+    Se usa para impedir cuentas de cobro duplicadas."""
+    return (CuentaLinea.query.join(CuentaCobro)
+            .filter(CuentaLinea.cliente_id == cliente_id,
+                    CuentaCobro.anio_cobro_id == anio_id,
+                    CuentaLinea.estado == "ACTIVA",
+                    CuentaCobro.estado != "ANULADA").first())
+
+
+@bp.route("/cuentas/nueva", methods=["GET", "POST"])
+def cuenta_nueva():
+    a = anio_actual()
+    if not a:
+        return redirect(url_for("main.dashboard"))
+    if request.method == "POST":
+        f = request.form
+        duplicados = []
+        for cid_sel in request.form.getlist("clientes"):
+            try:
+                cli_sel = db.session.get(Cliente, int(cid_sel))
+            except (TypeError, ValueError):
+                continue
+            if not cli_sel:
+                continue
+            ya_sel = _cuenta_activa_de(cli_sel.id, a.id)
+            if ya_sel:
+                duplicados.append(f"{cli_sel.nombre} (ya está en {ya_sel.cuenta.numero_formateado})")
+        if duplicados:
+            flash("Cuenta NO creada, quedaría duplicada. Estos clientes ya tienen cuenta este año: "
+                  + ", ".join(duplicados), "error")
+            return redirect(url_for("main.cuenta_nueva"))
+        cuenta = CuentaCobro(anio_cobro_id=a.id, numero=_numero_libre(a),
+                             fecha=date.today(), estado="BORRADOR")
+        db.session.add(cuenta)
+        db.session.flush()
+        for cid in request.form.getlist("clientes"):
+            cli = db.session.get(Cliente, int(cid))
+            if not cli:
+                continue
+            val = f.get(f"valor_{cid}", "")
+            if val == "":
+                p = PresupuestoCliente.query.filter_by(cliente_id=cli.id, anio_cobro=a.anio_cobro).first()
+                val = p.valor if p else 0
+            con = (f.get(f"concepto_{cid}", "") or "").strip()
+            db.session.add(CuentaLinea(cuenta=cuenta, cliente_id=cli.id, valor=float(val or 0),
+                                       concepto=con))
+        db.session.flush()
+        pagador_id = int(f.get("pagador_id")) if f.get("pagador_id") else None
+        if pagador_id and any(l.cliente_id == pagador_id for l in cuenta.lineas):
+            cuenta.pagador_cliente_id = pagador_id
+        cuenta.observaciones = (f.get("observaciones", "") or "").strip()
+        a.numero_siguiente = cuenta.numero + 1
+        db.session.commit()
+        flash(f"Cuenta {cuenta.numero_formateado} creada en borrador", "ok")
+        return redirect(url_for("main.cuenta_detalle", cid=cuenta.id))
+    # GET: selector con presupuestos y grupos
+    pares = []
+    for p in PresupuestoCliente.query.filter_by(anio_cobro=a.anio_cobro).all():
+        if p.cliente.activo:
+            pares.append({"cliente": p.cliente, "valor": p.valor})
+    pares.sort(key=lambda x: x["cliente"].nombre)
+    grupos = GrupoFamiliar.query.order_by(GrupoFamiliar.nombre).all()
+    pagadores = [p["cliente"] for p in pares]
+    ya_en = {}
+    for l in (CuentaLinea.query.join(CuentaCobro)
+              .filter(CuentaLinea.estado == "ACTIVA",
+                      CuentaCobro.anio_cobro_id == a.id,
+                      CuentaCobro.estado != "ANULADA").all()):
+        ya_en[l.cliente_id] = l.cuenta.numero_formateado
+    return render_template("cuenta_nueva.html", a=a, pares=pares, grupos=grupos,
+                           pagadores=pagadores, ya_en=ya_en)
+
+
+@bp.route("/cuentas/<int:cid>")
+def cuenta_detalle(cid):
+    cuenta = db.get_or_404(CuentaCobro, cid)
+    ids_en_cuenta = {l.cliente_id for l in cuenta.lineas}
+    todos = Cliente.query.filter_by(activo=True).order_by(Cliente.nombre).all()
+    return render_template("cuenta_detalle.html", cuenta=cuenta,
+                           todosClientes=[c for c in todos if c.id not in ids_en_cuenta],
+                           todosPagadores=[l.cliente for l in cuenta.lineas],
+                           formas=Pago.formas_pago())
+
+
+@bp.route("/cuentas/<int:cid>/pdf")
+def cuenta_pdf(cid):
+    """Muestra el PDF inline (para pestaña nueva o modal), sin descargar."""
+    cuenta = db.get_or_404(CuentaCobro, cid)
+    buf = io.BytesIO()
+    from .pdf_generator import generar_desde_dict, _datos_cuenta
+    generar_desde_dict(_datos_cuenta(cuenta), buf)
+    buf.seek(0)
+    return Response(buf, mimetype="application/pdf", headers={
+        "Content-Disposition": f"inline; filename={_nombre_pdf(cuenta)}"})
+
+
+@bp.route("/cuentas/preview", methods=["POST"])
+def cuenta_preview():
+    """PDF de previsualización SIN crear la cuenta ni gastar número.
+    Recibe el mismo formulario de 'Nueva cuenta' por AJAX."""
+    a = anio_actual()
+    if not a:
+        return ("Sin año activo", 400)
+    f = request.form
+    lineas = []
+    pagador = None
+    pid = int(f.get("pagador_id")) if f.get("pagador_id") else None
+    for cid in request.form.getlist("clientes"):
+        cli = db.session.get(Cliente, int(cid))
+        if not cli:
+            continue
+        val = f.get(f"valor_{cid}", "")
+        if val == "":
+            p = PresupuestoCliente.query.filter_by(cliente_id=cli.id, anio_cobro=a.anio_cobro).first()
+            val = p.valor if p else 0
+        con = (f.get(f"concepto_{cid}", "") or "").strip()
+        lineas.append({"nombre": cli.nombre, "concepto": con, "valor": float(val or 0)})
+        if pid and cli.id == pid:
+            pagador = cli
+    if not lineas:
+        return ("Selecciona al menos un cliente", 400)
+    if pagador is None:
+        ids_sel = [int(c) for c in request.form.getlist("clientes")]
+        sel = [db.session.get(Cliente, i) for i in ids_sel]
+        pagador = next((c for c in sel if c and c.es_pagador), None) or (sel[0] if sel else None)
+    from .pdf_generator import generar_desde_dict, datos_preview
+    d = datos_preview(a, lineas, pagador, obs=(f.get("observaciones", "") or "").strip())
+    buf = io.BytesIO()
+    generar_desde_dict(d, buf)
+    buf.seek(0)
+    return Response(buf, mimetype="application/pdf")
+
+
+@bp.route("/cuentas/<int:cid>/linea/agregar", methods=["POST"])
+def cuenta_linea_agregar(cid):
+    cuenta = db.get_or_404(CuentaCobro, cid)
+    f = request.form
+    cid_cli = int(f.get("cliente_id") or 0)
+    if cid_cli:
+        ya_ag = _cuenta_activa_de(cid_cli, cuenta.anio_cobro_id)
+        if ya_ag:
+            cli_ag = db.session.get(Cliente, cid_cli)
+            flash(f"{cli_ag.nombre} ya está en la cuenta {ya_ag.cuenta.numero_formateado}: "
+                  "no se agregó duplicado.", "error")
+            return redirect(url_for("main.cuenta_detalle", cid=cid))
+        val = f.get("valor", "")
+        if val == "":
+            a = cuenta.anio
+            p = PresupuestoCliente.query.filter_by(cliente_id=cid_cli, anio_cobro=a.anio_cobro).first()
+            val = p.valor if p else 0
+        con = (f.get("concepto", "") or "").strip()
+        db.session.add(CuentaLinea(cuenta_id=cuenta.id, cliente_id=cid_cli, valor=float(val or 0),
+                                   concepto=con))
+        db.session.commit()
+    return redirect(url_for("main.cuenta_detalle", cid=cid))
+
+
+@bp.route("/lineas/<int:lid>/concepto", methods=["POST"])
+def linea_concepto(lid):
+    lin = db.get_or_404(CuentaLinea, lid)
+    lin.concepto = (request.form.get("concepto", "") or "").strip()
+    db.session.commit()
+    return redirect(request.referrer or url_for("main.dashboard"))
+
+
+@bp.route("/cuentas/<int:cid>/pagador", methods=["POST"])
+def cuenta_pagador(cid):
+    """Seleccionar a nombre de quién sale ESTA cuenta (sin cambiar el grupo)."""
+    cuenta = db.get_or_404(CuentaCobro, cid)
+    pid = int(request.form.get("pagador_id") or 0)
+    ids = {l.cliente_id for l in cuenta.lineas}
+    cuenta.pagador_cliente_id = pid if pid in ids else None
+    db.session.commit()
+    flash("Pagador de la cuenta actualizado", "ok")
+    return redirect(url_for("main.cuenta_detalle", cid=cid))
+
+
+@bp.route("/lineas/<int:lid>/valor", methods=["POST"])
+def linea_valor(lid):
+    lin = db.get_or_404(CuentaLinea, lid)
+    val = request.form.get("valor")
+    if val not in (None, ""):
+        lin.valor = float(val)
+        db.session.commit()
+    return redirect(request.referrer or url_for("main.dashboard"))
+
+
+@bp.route("/lineas/<int:lid>/anular", methods=["POST"])
+def linea_anular(lid):
+    lin = db.get_or_404(CuentaLinea, lid)
+    lin.estado = "ANULADA" if lin.estado == "ACTIVA" else "ACTIVA"
+    lin.cuenta.marcar_estado()
+    db.session.commit()
+    return redirect(request.referrer or url_for("main.dashboard"))
+
+
+@bp.route("/cuentas/<int:cid>/fecha", methods=["POST"])
+def cuenta_fecha(cid):
+    cuenta = db.get_or_404(CuentaCobro, cid)
+    f = request.form.get("fecha")
+    if f:
+        cuenta.fecha = date.fromisoformat(f)
+        db.session.commit()
+    return redirect(url_for("main.cuenta_detalle", cid=cid))
+
+
+@bp.route("/cuentas/<int:cid>/enviar", methods=["POST"])
+def cuenta_enviar(cid):
+    cuenta = db.get_or_404(CuentaCobro, cid)
+    f = request.form
+    medio = f.get("medio", "Correo")
+    fecha = f.get("fecha") or date.today().isoformat()
+    db.session.add(Envio(cuenta_id=cuenta.id, medio=medio, fecha=date.fromisoformat(fecha),
+                         nota=f.get("nota", "")))
+    if cuenta.estado == "BORRADOR":
+        cuenta.estado = "ENVIADA"
+    db.session.commit()
+    flash("Envío registrado", "ok")
+    return redirect(url_for("main.cuenta_detalle", cid=cid))
+
+
+@bp.route("/cuentas/<int:cid>/envio/<int:eid>/eliminar", methods=["POST"])
+def envio_eliminar(cid, eid):
+    """Deshacer un envío registrado por error (ej. descargar el .eml de un cliente
+    al que todavía no se le ha hecho la declaración). Elimina el registro de envío
+    y recalcula el estado: si era el único envío, la cuenta vuelve a BORRADOR."""
+    cuenta = db.get_or_404(CuentaCobro, cid)
+    envio = db.session.get(Envio, eid)
+    if envio is None or envio.cuenta_id != cuenta.id:
+        flash("Ese envío no existe o no pertenece a esta cuenta.", "danger")
+        return redirect(url_for("main.cuenta_detalle", cid=cid))
+    info = f"{envio.medio} del {envio.fecha.strftime('%d/%m/%Y') if envio.fecha else '?'}"
+    db.session.delete(envio)
+    cuenta.marcar_estado()   # sin envíos y con saldo => BORRADOR (si pagó, sigue PAGADA)
+    db.session.commit()
+    flash(f"Envío eliminado ({info}). La cuenta volvió a BORRADOR: genera el correo de nuevo cuando toque.", "ok")
+    return redirect(url_for("main.cuenta_detalle", cid=cid))
+
+
+@bp.route("/cuentas/<int:cid>/pago", methods=["POST"])
+def cuenta_pago(cid):
+    cuenta = db.get_or_404(CuentaCobro, cid)
+    f = request.form
+    valor = float(f.get("valor") or 0)
+    if valor > 0:
+        db.session.add(Pago(cuenta_id=cuenta.id, valor=valor,
+                            fecha=date.fromisoformat(f.get("fecha") or date.today().isoformat()),
+                            forma=f.get("forma", "Transferencia"),
+                            nota=f.get("nota", "")))
+    cuenta.marcar_estado()
+    db.session.commit()
+    flash("Pago registrado", "ok")
+    return redirect(url_for("main.cuenta_detalle", cid=cid))
+
+
+@bp.route("/cuentas/<int:cid>/ajuste", methods=["POST"])
+def cuenta_ajuste(cid):
+    cuenta = db.get_or_404(CuentaCobro, cid)
+    f = request.form
+    valor = float(f.get("valor") or 0)
+    if valor:
+        db.session.add(Ajuste(cuenta_id=cuenta.id, valor=valor,
+                              fecha=date.fromisoformat(f.get("fecha") or date.today().isoformat()),
+                              motivo=f.get("motivo", "")))
+        cuenta.marcar_estado()
+        db.session.commit()
+        flash("Ajuste registrado", "ok")
+    return redirect(url_for("main.cuenta_detalle", cid=cid))
+
+
+@bp.route("/cuentas/<int:cid>/anular", methods=["POST"])
+def cuenta_anular(cid):
+    cuenta = db.get_or_404(CuentaCobro, cid)
+    motivo = (request.form.get("motivo") or "").strip()
+    if not motivo:
+        flash("El motivo de la anulación es obligatorio.", "error")
+        return redirect(url_for("main.cuenta_detalle", cid=cid))
+    cuenta.estado = "ANULADA"   # el número queda conservado, no se reutiliza
+    cuenta.motivo_anulacion = motivo
+    db.session.commit()
+    flash(f"Cuenta {cuenta.numero_formateado} ANULADA. Motivo: {motivo}. El número no se reutiliza.", "ok")
+    return redirect(url_for("main.cuentas"))
+
+
+@bp.route("/cuentas/<int:cid>/eliminar", methods=["POST"])
+def cuenta_eliminar(cid):
+    """Elimina una cuenta SIN envíos registrados y libera el número si era el último."""
+    cuenta = db.get_or_404(CuentaCobro, cid)
+    if cuenta.envios.count() > 0:
+        flash("Esta cuenta ya tiene envíos registrados: no se puede eliminar, solo ANULAR con motivo.", "error")
+        return redirect(url_for("main.cuenta_detalle", cid=cid))
+    a = cuenta.anio
+    numero = cuenta.numero_formateado
+    if a.numero_siguiente > cuenta.numero:
+        a.numero_siguiente = cuenta.numero   # libera el consecutivo
+    db.session.delete(cuenta)
+    db.session.commit()
+    flash(f"Cuenta {numero} eliminada. El número {numero} queda disponible de nuevo.", "ok")
+    return redirect(url_for("main.cuentas"))
+
+
+@bp.route("/cuentas/<int:cid>/sincronizar-grupo", methods=["POST"])
+def cuenta_sincronizar_grupo(cid):
+    """Agrega a la cuenta los miembros ACTIVOS del grupo del pagador que falten
+    (con su presupuesto del año) y regenera el PDF. Si la cuenta ya tiene envíos,
+    regenera también el borrador .eml de Outlook y lo registra."""
+    cuenta = db.get_or_404(CuentaCobro, cid)
+    destino = url_for("main.cuenta_detalle", cid=cid)
+    if cuenta.estado == "ANULADA":
+        flash("Cuenta anulada: no se puede sincronizar.", "error")
+        return redirect(destino)
+    a = cuenta.anio
+    pagador = cuenta.pagador_principal
+    if not pagador or not pagador.grupo_id:
+        flash("Esta cuenta no es de un grupo familiar (el pagador no tiene grupo).", "error")
+        return redirect(destino)
+    g = pagador.grupo
+    agregados, problemas = [], []
+    for m in g.miembros:
+        if not m.activo:
+            continue
+        if any(l.cliente_id == m.id and l.estado == "ACTIVA" for l in cuenta.lineas):
+            continue
+        ya = _cuenta_activa_de(m.id, a.id)
+        if ya:
+            problemas.append(f"{m.nombre} (ya está en {ya.cuenta.numero_formateado})")
+            continue
+        p = PresupuestoCliente.query.filter_by(cliente_id=m.id, anio_cobro=a.anio_cobro).first()
+        if not p or p.valor <= 0:
+            problemas.append(f"{m.nombre} (sin presupuesto {a.anio_cobro})")
+            continue
+        db.session.add(CuentaLinea(cuenta=cuenta, cliente_id=m.id, valor=p.valor))
+        agregados.append(m.nombre)
+    if not agregados:
+        msg = "Nada que sincronizar: la cuenta ya tiene a todos los miembros activos del grupo."
+        if problemas:
+            msg += " Faltaban, pero: " + ", ".join(problemas)
+        flash(msg, "error")
+        return redirect(destino)
+    db.session.commit()
+    carpeta = _carpeta_pdfs()
+    ruta = os.path.join(carpeta, _nombre_pdf(cuenta))
+    generar_pdf(cuenta, ruta)
+    msg = (f"Sincronizado: se agregaron {len(agregados)} miembro(s) del grupo {g.nombre}: "
+           + ", ".join(agregados) + f". Nuevo total $ {cuenta.total:,.0f}. PDF regenerado en {ruta}")
+    if problemas:
+        msg += ". Ojo: " + ", ".join(problemas)
+    hubo_envios = cuenta.envios.count() > 0
+    pag = cuenta.pagador_principal
+    if hubo_envios and pag and (pag.email or "").strip():
+        ccorreos = _carpeta_correos()
+        if _generar_eml(cuenta, ccorreos):
+            db.session.add(Envio(cuenta_id=cuenta.id, medio="Correo", fecha=date.today(),
+                                 nota=f"Borrador .eml regenerado con el grupo completo en {ccorreos} "
+                                      f"(para {pag.email})"))
+            if cuenta.estado == "BORRADOR":
+                cuenta.estado = "ENVIADA"
+            db.session.commit()
+            msg += f". Borrador de Outlook (.eml) regenerado en {ccorreos}"
+    elif not hubo_envios:
+        msg += ". La cuenta sigue en BORRADOR: usa 'Redactar correo' cuando quieras y saldrá con el grupo completo."
+    flash(msg, "ok")
+    return redirect(destino)
+
+
+def _generar_eml(cuenta, carpeta, extra=""):
+    """Genera el PDF de la cuenta (en `carpeta`) y su .eml de borrador de Outlook
+    (X-Unsent) con destinatario, asunto, cuerpo de la oficina y PDF adjunto.
+    Requiere pagador con correo. Devuelve la ruta del .eml."""
+    from email.message import EmailMessage
+    from email.utils import formatdate, make_msgid
+
+    pagador = cuenta.pagador_principal
+    if not pagador or not (pagador.email or "").strip():
+        return None
+    ruta_pdf = os.path.join(carpeta, _nombre_pdf(cuenta))
+    generar_pdf(cuenta, ruta_pdf)
+    asunto = f"Declaración y Cuenta de cobro asesoría tributaria AG {cuenta.anio.anio_gravable}"
+    if pagador.grupo:
+        gn = (pagador.grupo.nombre or "").strip()
+        if re.fullmatch(r"(?i)G\d+", gn):        # G22 -> apellido del pagador
+            apellidos = " ".join((pagador.nombre or "").split()[:2])
+            asunto += f" - Familia {apellidos.title()}"
+        else:
+            asunto += f" - {gn.title()}"
+    else:
+        asunto += f" - {pagador.nombre.title()}"
+    cuerpo = _cuerpo_correo(cuenta, pagador, extra=extra)
+    eml = EmailMessage()
+    eml["X-Unsent"] = "1"
+    remitente = Parametro.get("emisor_email", "").strip()
+    if remitente:
+        eml["From"] = remitente
+    eml["To"] = (pagador.email or "").strip()
+    eml["Subject"] = asunto
+    eml["Date"] = formatdate(localtime=True)
+    eml["Message-ID"] = make_msgid()
+    eml.set_content(cuerpo)
+    with open(ruta_pdf, "rb") as fh:
+        eml.add_attachment(fh.read(), maintype="application", subtype="pdf",
+                           filename=os.path.basename(ruta_pdf))
+    ruta_eml = os.path.join(carpeta, os.path.splitext(os.path.basename(ruta_pdf))[0] + ".eml")
+    with open(ruta_eml, "wb") as fh:
+        fh.write(bytes(eml))
+    return ruta_eml
+
+
+@bp.route("/cuentas/<int:cid>/outlook", methods=["POST"])
+def cuenta_outlook(cid):
+    """Genera el PDF y un archivo .eml (borrador de correo estándar) en la carpeta
+    configurada. Al abrir el .eml (doble clic) se monta como borrador editable en
+    Outlook (o el cliente de correo asociado) con destinatario, asunto, cuerpo y PDF
+    adjunto, listo para revisar y enviar. Sin COM ni hilos: cero errores de permisos."""
+    cuenta = db.get_or_404(CuentaCobro, cid)
+    pagador = cuenta.pagador_principal
+    if not pagador or not (pagador.email or "").strip():
+        flash(f"El pagador {pagador.nombre if pagador else '(sin pagador)'} no tiene correo guardado.", "error")
+        return redirect(url_for("main.cuenta_detalle", cid=cid))
+    carpeta = _carpeta_correos()
+    _generar_eml(cuenta, carpeta, extra=request.form.get("correo_extra", ""))
+
+    db.session.add(Envio(cuenta_id=cuenta.id, medio="Correo", fecha=date.today(),
+                         nota=f"Borrador .eml generado en {carpeta} (para {pagador.email})"))
+    if cuenta.estado == "BORRADOR":
+        cuenta.estado = "ENVIADA"
+    db.session.commit()
+    flash(f"PDF y borrador de correo (.eml) guardados en {carpeta}. "
+          "Abre el .eml (doble clic), revisa y envía.", "ok")
+    return redirect(url_for("main.cuenta_detalle", cid=cid))
+
+
+@bp.route("/cuentas/<int:cid>/reactivar", methods=["POST"])
+def cuenta_reactivar(cid):
+    cuenta = db.get_or_404(CuentaCobro, cid)
+    cuenta.marcar_estado()
+    if cuenta.estado == "ANULADA":
+        cuenta.estado = "ENVIADA" if cuenta.envios.count() else "BORRADOR"
+    db.session.commit()
+    return redirect(url_for("main.cuenta_detalle", cid=cid))
+
+
+@bp.route("/cuentas/<int:cid>/nota", methods=["POST"])
+def cuenta_nota(cid):
+    """Guarda nota interna y/o observaciones del PDF. La nota interna JAMÁS sale en el PDF."""
+    cuenta = db.get_or_404(CuentaCobro, cid)
+    cuenta.nota = request.form.get("nota", "")
+    cuenta.observaciones = request.form.get("observaciones", "")
+    db.session.commit()
+    flash("Notas guardadas", "ok")
+    return redirect(url_for("main.cuenta_detalle", cid=cid))
+
+
+@bp.route("/cuentas/<int:cid>/descargar", methods=["POST"])
+def cuenta_descargar(cid):
+    """Descarga rápida: guarda el PDF directamente en la carpeta configurada en
+    Parámetros (sin preguntar nada) y avisa la ruta exacta."""
+    cuenta = db.get_or_404(CuentaCobro, cid)
+    carpeta = _carpeta_pdfs()
+    ruta = os.path.join(carpeta, _nombre_pdf(cuenta))
+    generar_pdf(cuenta, ruta)
+    if request.accept_mimetypes.best == "application/json":
+        return jsonify(ok=True, ruta=ruta)
+    flash(f"PDF guardado en: {ruta}", "ok")
+    return redirect(url_for("main.cuenta_detalle", cid=cid))
+
+
+@bp.route("/cuentas/<int:cid>/imagen", methods=["POST"])
+def cuenta_imagen(cid):
+    """Genera imagen PNG de la cuenta (para WhatsApp) en la carpeta de imágenes
+    configurada en Parámetros (vacía = carpeta de PDFs) y la descarga también
+    al navegador. El PNG NO reemplaza el PDF: es una lámina para compartir."""
+    from .imagen_cuenta import generar_imagen, _nombre_imagen
+    cuenta = db.get_or_404(CuentaCobro, cid)
+    carpeta = _carpeta_imagenes()
+    ruta = os.path.join(carpeta, _nombre_imagen(cuenta))
+    generar_imagen(cuenta, ruta)
+    if request.accept_mimetypes.best == "application/json":
+        return jsonify(ok=True, ruta=ruta)
+    flash(f"Imagen guardada en: {ruta}", "ok")
+    return redirect(request.referrer or url_for("main.cuentas"))
+
+
+# ---------------- Exportar a Excel ----------------
+@bp.route("/exportar/excel")
+def exportar_excel():
+    """Libro con 5 hojas: Resumen, Cuentas, Pagos, Clientes y Maestro."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    a = anio_actual()
+    wb = Workbook()
+    morado = "FF6D28D9"
+    h1 = Font(bold=True, color="FFFFFFFF")
+    fill = PatternFill("solid", fgColor=morado)
+
+    def _hoja(ws, cabeceras, filas, anchos):
+        ws.append(cabeceras)
+        for c, wdt in enumerate(anchos, 1):
+            ws.column_dimensions[get_column_letter(c)].width = wdt
+            ws.cell(row=1, column=c).font = h1
+            ws.cell(row=1, column=c).fill = fill
+        for fila in filas:
+            ws.append(list(fila))
+        ws.freeze_panes = "A2"
+
+    # Hoja 1: Resumen
+    ws = wb.active
+    ws.title = "Resumen"
+    if a:
+        presup = db.session.query(db.func.coalesce(db.func.sum(PresupuestoCliente.valor), 0.0))\
+            .filter_by(anio_cobro=a.anio_cobro).scalar()
+        emitido = db.session.query(db.func.coalesce(db.func.sum(CuentaLinea.valor), 0.0))\
+            .join(CuentaCobro).filter(CuentaCobro.anio_cobro_id == a.id,
+                                      CuentaLinea.estado == "ACTIVA",
+                                      CuentaCobro.estado != "ANULADA").scalar()
+        pagado = db.session.query(db.func.coalesce(db.func.sum(Pago.valor), 0.0))\
+            .join(CuentaCobro).filter(CuentaCobro.anio_cobro_id == a.id,
+                                      CuentaCobro.estado != "ANULADA").scalar()
+        ajustes = db.session.query(db.func.coalesce(db.func.sum(Ajuste.valor), 0.0))\
+            .join(CuentaCobro).filter(CuentaCobro.anio_cobro_id == a.id,
+                                      CuentaCobro.estado != "ANULADA").scalar()
+        filas = [("Año de cobro", a.anio_cobro), ("Año gravable", a.anio_gravable),
+                 ("Presupuestado", presup), ("Emitido en cuentas", emitido),
+                 ("Pagado", pagado), ("Ajustes/descuentos", ajustes),
+                 ("Saldo por cobrar", emitido - ajustes - pagado),
+                 ("Próximo número", f"{a.prefijo}-{a.numero_siguiente:03d}")]
+    else:
+        filas = [("Sin año activo", "")]
+    _hoja(ws, ["Concepto", "Valor"], filas, [26, 22])
+
+    # Hoja 2: Cuentas (una fila por cliente/línea)
+    ws = wb.create_sheet("Cuentas")
+    filas = []
+    q = CuentaCobro.query.filter(CuentaCobro.estado != "ANULADA")
+    if a:
+        q = q.filter_by(anio_cobro_id=a.id)
+    for c in q.order_by(CuentaCobro.numero):
+        for l in c.lineas:
+            if l.estado != "ACTIVA":
+                continue
+            filas.append((c.numero_formateado, c.fecha, c.estado, l.cliente.codigo,
+                          l.cliente.nombre, l.valor, c.total_ajustes, c.total_pagado,
+                          c.saldo, (c.pagador_principal.nombre if c.pagador_principal else ""),
+                          c.motivo_anulacion or ""))
+    _hoja(ws, ["Cuenta", "Fecha", "Estado", "Código", "Cliente", "Valor línea",
+               "Ajustes cuenta", "Pagado cuenta", "Saldo cuenta", "Pagador", "Motivo anulación"],
+          filas, [10, 12, 10, 8, 38, 13, 13, 13, 13, 38, 28])
+
+    # Hoja 3: Pagos (un registro por pago/abono)
+    ws = wb.create_sheet("Pagos")
+    filas = []
+    q = Pago.query.join(CuentaCobro).filter(CuentaCobro.estado != "ANULADA")
+    if a:
+        q = q.filter(CuentaCobro.anio_cobro_id == a.id)
+    for p in q.order_by(Pago.fecha):
+        filas.append((p.cuenta.numero_formateado, p.fecha,
+                      " / ".join(l.cliente.nombre for l in p.cuenta.lineas if l.estado == "ACTIVA"),
+                      p.valor, p.forma, p.nota or ""))
+    _hoja(ws, ["Cuenta", "Fecha", "Clientes", "Valor", "Forma", "Nota"],
+          filas, [10, 12, 45, 13, 16, 30])
+
+    # Hoja 4: Clientes con presupuesto y presupuesto del año
+    ws = wb.create_sheet("Clientes")
+    filas = []
+    presup = {}
+    if a:
+        for p in PresupuestoCliente.query.filter_by(anio_cobro=a.anio_cobro):
+            presup[p.cliente_id] = p
+    for cli in Cliente.query.order_by(Cliente.nombre):
+        p = presup.get(cli.id)
+        filas.append((cli.codigo, cli.nombre, cli.tipo, cli.nit, cli.dv, cli.ciudad,
+                      cli.telefonos or "", cli.email or "",
+                      cli.grupo.nombre if cli.grupo else "", "Sí" if cli.es_pagador else "",
+                      p.valor if p else 0, "Sí" if cli.activo else "No", cli.nota or ""))
+    _hoja(ws, ["Código", "Nombre", "Tipo", "CC/NIT", "DV", "Ciudad", "Teléfonos",
+               "Email", "Grupo", "Pagador", "Presupuesto", "Activo", "Nota"],
+          filas, [8, 38, 6, 14, 5, 12, 14, 28, 22, 9, 13, 8, 30])
+
+    # Hoja 5: Maestro (espejo del Excel clásico: TODOS los clientes activos con su
+    # presupuesto del año, y el estado de cobro se va llenando a medida que hay cuentas)
+    ws = wb.create_sheet("Maestro")
+    filas = []
+    # mapa cliente -> línea ACTIVA más reciente del año (para cuentas y pagos por cliente)
+    por_cliente = {}
+    q = CuentaCobro.query.filter(CuentaCobro.estado != "ANULADA")
+    if a:
+        q = q.filter_by(anio_cobro_id=a.id)
+    for c in q.order_by(CuentaCobro.numero):
+        for l in c.lineas:
+            if l.estado != "ACTIVA":
+                continue
+            por_cliente[l.cliente_id] = (c, l)
+    for cli in Cliente.query.filter_by(activo=True).order_by(Cliente.nombre):
+        pres = presup.get(cli.id)
+        cta = por_cliente.get(cli.id)
+        if not cta:
+            # sin cuenta todavía: presupuesto visible, cobro en blanco
+            filas.append((len(filas) + 1, cli.nombre, cli.codigo, cli.nit_formateado, cli.dv,
+                          float(pres.valor or 0) if pres else 0.0,
+                          "", "", "", "", "", "", "", None, None))
+            continue
+        c, l = cta
+        ue = c.ultimo_envio
+        pagos_cta = sorted(c.pagos.all(), key=lambda p: p.fecha)
+        pagado_cta = sum(p.valor for p in pagos_cta)
+        saldo_cta = c.saldo
+        if c.estado == "ANULADA":
+            estado_cobro = "ANULADA"
+        elif saldo_cta <= 0 and c.total > 0:
+            estado_cobro = "PAGADO"
+        elif c.estado == "ENVIADA" or c.envios.count() > 0:
+            estado_cobro = "ENVIADA"
+        else:
+            estado_cobro = "PENDIENTE"
+        medio = ue.medio if ue else (pagos_cta[-1].forma if pagos_cta and c.estado != "BORRADOR" else "")
+        filas.append((len(filas) + 1, cli.nombre, cli.codigo, cli.nit_formateado, cli.dv,
+                      float(l.valor or 0), c.numero_formateado,
+                      "Sí" if (ue or c.estado in ("ENVIADA", "PAGADA")) else "",
+                      ue.fecha.strftime("%d/%m/%Y") if ue else "",
+                      estado_cobro,
+                      medio,
+                      pagos_cta[-1].fecha.strftime("%d/%m/%Y") if pagos_cta else "",
+                      (c.observaciones or "")[:80],
+                      pagado_cta if pagado_cta else None,
+                      saldo_cta if saldo_cta and saldo_cta > 0 else None))
+    _hoja(ws, ["No.", "APELLIDOS Y NOMBRES / RAZÓN SOCIAL", "CÓDIGO", "NIT No.", "D.V.",
+               "VALOR CUENTA DE COBRO", "CUENTA DE COBRO No.", "ENVIADA", "FECHA ENVÍO",
+               "ESTADO DEL COBRO", "MEDIO DE PAGO", "FECHA DE PAGO", "OBSERVACIONES",
+               "PAGADO", "SALDO"],
+          filas, [6, 42, 9, 15, 5, 16, 12, 9, 12, 15, 16, 12, 30, 12, 12])
+    # Hoja 6: Morosos y acuerdos del año anterior (con la nota de cada cierre)
+    ws = wb.create_sheet("Morosos y acuerdos")
+    anio_ant = (a.anio_cobro - 1) if a else ""
+    mor_mor, mor_acu = [], []
+    for cli in Cliente.query.filter_by(activo=True).order_by(Cliente.nombre):
+        pa = float(cli.cobrado_anterior or 0)
+        ef = float(cli.cobrado_anterior_real or 0)
+        if pa <= 0 or ef >= pa - 0.5:
+            continue
+        dif = pa - ef
+        dato = ("ACUERDO INTERNO" if cli.moroso_cerrado else "MOROSO",
+                cli.codigo, cli.nombre, pa, ef, dif, (cli.moroso_nota or ""))
+        (mor_acu if cli.moroso_cerrado else mor_mor).append(dato)
+    filas = mor_mor + mor_acu
+    filas.append(("", "", "TOTAL MOROSOS (por cobrar)", "", "",
+                  sum(x[5] for x in mor_mor), ""))
+    filas.append(("", "", "TOTAL DESCONTADO (acuerdos internos)", "", "",
+                  sum(x[5] for x in mor_acu), ""))
+    _hoja(ws, ["Estado", "Código", "Cliente", f"Cobrado {anio_ant}",
+               f"Efect. pagado {anio_ant}", "Falta / descontado",
+               "Nota (acuerdo interno, descuento...)"],
+          filas, [18, 8, 38, 14, 14, 15, 55])
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    nombre = f"Cobros_{a.prefijo if a else 'general'}_{date.today().isoformat()}.xlsx"
+    return Response(buf, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f"attachment; filename={nombre}"})
+
+
+# ---------------- Plantilla + importador de clientes ----------------
+@bp.route("/clientes/plantilla")
+def clientes_plantilla():
+    """Descarga la plantilla para importar/actualizar clientes."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Clientes"
+    cabeceras = ["Código", "Nombre", "Tipo", "CC/NIT", "DV", "Ciudad", "Dirección",
+                 "Teléfonos", "Email", "Grupo", "Pagador", "Activo", "Nota",
+                 "Presupuesto", "C de C año anterior"]
+    anchos = [8, 38, 7, 14, 5, 12, 26, 14, 28, 10, 9, 8, 30, 13, 18]
+    h1 = Font(bold=True, color="FFFFFFFF")
+    fill = PatternFill("solid", fgColor="FF6D28D9")
+    ws.append(cabeceras)
+    for c, wdt in enumerate(anchos, 1):
+        ws.column_dimensions[get_column_letter(c)].width = wdt
+        ws.cell(row=1, column=c).font = h1
+        ws.cell(row=1, column=c).fill = fill
+    ejemplo = [41, "PÉREZ GÓMEZ JUAN", "PN", "123456789", "", "MEDELLÍN",
+               "CR 00 00-00", "3000000000", "juan@correo.com", "", "NO", "Sí", "NO DECLARANTE",
+               470000, 430000]
+    ws.append(ejemplo)
+    ws.freeze_panes = "A2"
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return Response(buf, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": "attachment; filename=plantilla_clientes.xlsx"})
+
+
+@bp.route("/clientes/importar", methods=["POST"])
+def clientes_importar():
+    """Importa/actualiza clientes desde la plantilla. Código es la llave.
+    Las columnas se detectan por su CABECERA (acepta la plantilla del sistema y el
+    Clientes.xlsx de Felipe; las columnas desconocidas se ignoran)."""
+    f = request.files.get("archivo")
+    if not f or not f.filename:
+        flash("Selecciona el archivo Excel", "error")
+        return redirect(url_for("main.clientes"))
+    import openpyxl
+    crear_nuevos = (request.form.get("cliente_nuevo") or "").strip().upper() == "SI"
+
+    def _norm_hdr(s):
+        import unicodedata as _u
+        s = _u.normalize("NFD", str(s or ""))
+        s = "".join(ch for ch in s if _u.category(ch) != "Mn").upper().strip()
+        return s
+
+    ALIAS = {
+        "CODIGO": "codigo", "NOMBRE": "nombre", "TIPO": "tipo", "NIT": "nit",
+        "CC/NIT": "nit", "DV": "dv", "CIUDAD": "ciudad", "DIRECCION": "direccion",
+        "TELEFONOS": "telefonos", "TELEFONO": "telefonos", "EMAIL": "email", "CORREO": "email",
+        "GRUPO": "grupo",
+        "PAGADOR": "pagador", "ES_PAGADOR": "pagador",
+        "ACTIVO": "activo", "NOTA": "nota", "PRESUPUESTO": "presupuesto",
+        "C DE C ANO ANTERIOR": "cobrado_anterior", "COBRADO ANO ANTERIOR": "cobrado_anterior",
+    }
+    try:
+        wb = openpyxl.load_workbook(f, data_only=True)
+        ws = wb["Clientes"] if "Clientes" in wb.sheetnames else wb.active
+        rows = list(ws.iter_rows(values_only=True))
+        if not rows:
+            flash("El archivo está vacío", "error")
+            return redirect(url_for("main.clientes"))
+        # mapa cabecera -> índice de columna
+        idx = {}
+        for j, h in enumerate(rows[0]):
+            key = ALIAS.get(_norm_hdr(h))
+            if key and key not in idx:
+                idx[key] = j
+        if "codigo" not in idx or "nombre" not in idx:
+            flash("No encontré las columnas 'Código' y 'Nombre' en la primera fila", "error")
+            return redirect(url_for("main.clientes"))
+        grupos = {g.nombre.upper(): g for g in GrupoFamiliar.query.all()}
+        a = anio_actual()
+        stats = {"creados": 0, "actualizados": 0, "presupuestos": 0, "errores": []}
+        for i, row in enumerate(rows[1:], start=2):
+            val = lambda k: (row[idx[k]] if k in idx and idx[k] < len(row) and row[idx[k]] is not None else "")
+            sv = lambda k: str(val(k)).strip()
+            codigo = row[idx["codigo"]]
+            nombre = sv("nombre")
+            if codigo in (None, "") or not nombre:
+                continue  # fila vacía
+            try:
+                codigo = int(float(codigo))
+            except (TypeError, ValueError):
+                stats["errores"].append(f"Fila {i}: código inválido")
+                continue
+            tipo = sv("tipo").upper() or "PN"
+            tipo = "PJ" if tipo.startswith("PJ") else "PN"
+            activo = sv("activo").upper() != "NO"
+            cli = Cliente.query.filter_by(codigo=codigo).first()
+            if cli is None:
+                if not crear_nuevos:
+                    stats["errores"].append(f"Fila {i}: cliente {codigo} no existe (y no se permiten nuevos)")
+                    continue
+                cli = Cliente(codigo=codigo, activo=activo)
+                db.session.add(cli)
+                stats["creados"] += 1
+            else:
+                stats["actualizados"] += 1
+            cli.nombre = nombre.upper()
+            cli.tipo = tipo
+            cli.nit = sv("nit")
+            cli.dv = sv("dv")
+            cli.ciudad = sv("ciudad") or "MEDELLÍN"
+            if "direccion" in idx:
+                cli.direccion = sv("direccion")
+            if "telefonos" in idx:
+                cli.telefonos = sv("telefonos")
+            if "email" in idx:
+                cli.email = sv("email")
+            if "nota" in idx:
+                cli.nota = sv("nota")
+            if "cobrado_anterior" in idx and val("cobrado_anterior") not in ("",):
+                try:
+                    cli.cobrado_anterior = float(val("cobrado_anterior"))
+                except (TypeError, ValueError):
+                    stats["errores"].append(f"Fila {i}: 'C de C año anterior' inválido")
+            # grupo y pagador
+            gn = sv("grupo").upper()
+            if gn and gn != "NO":
+                g = grupos.get(gn)
+                if g is None:
+                    g = GrupoFamiliar(nombre=gn)
+                    db.session.add(g)
+                    db.session.flush()
+                    grupos[gn] = g
+                cli.grupo_id = g.id
+            elif gn == "NO" or (not gn and "grupo" in idx):
+                cli.grupo_id = None
+                cli.es_pagador = False
+            pagador_txt = sv("pagador").upper()
+            if pagador_txt == "SI" and cli.grupo_id:
+                Cliente.query.filter(Cliente.grupo_id == cli.grupo_id,
+                                     Cliente.id != cli.id).update({"es_pagador": False})
+                cli.es_pagador = True
+            elif pagador_txt == "NO" and cli.grupo_id:
+                cli.es_pagador = False
+            # presupuesto del año activo (si la columna existe)
+            if a and "presupuesto" in idx and val("presupuesto") not in ("",):
+                try:
+                    v = float(val("presupuesto"))
+                    p = PresupuestoCliente.query.filter_by(cliente_id=cli.id, anio_cobro=a.anio_cobro).first()
+                    if p is None:
+                        p = PresupuestoCliente(cliente_id=cli.id, anio_cobro=a.anio_cobro, valor=v)
+                        db.session.add(p)
+                    else:
+                        p.valor = v
+                    stats["presupuestos"] += 1
+                except (TypeError, ValueError):
+                    stats["errores"].append(f"Fila {i}: presupuesto inválido")
+        db.session.commit()
+        msg = f"Importación lista: {stats['creados']} creados, {stats['actualizados']} actualizados, {stats['presupuestos']} presupuestos."
+        if stats["errores"]:
+            msg += " Detalles: " + "; ".join(stats["errores"][:5])
+        flash(msg, "ok" if not stats["errores"] else "error")
+    except Exception as e:
+        db.session.rollback()
+        flash(f"Error importando: {e}", "error")
+    return redirect(url_for("main.clientes"))
+
+
+# ---------------- Parámetros / años ----------------
+@bp.route("/parametros", methods=["GET", "POST"])
+def parametros():
+    a = anio_actual()
+    if request.method == "POST":
+        f = request.form
+        # solo se actualizan los campos que vengan en el formulario (a prueba de
+        # posts parciales: lo que no viene, NO se borra)
+        for k in ("emisor_nombre", "emisor_cc", "emisor_direccion", "emisor_telefonos",
+                  "emisor_ciudad", "emisor_email", "formas_pago", "carpeta_pdfs",
+                  "carpeta_correos", "carpeta_imagenes"):
+            if k in f:
+                Parametro.set(k, f.get(k, ""))
+        if "ruta_casa" in f:
+            Parametro.set("ruta_casa", f.get("ruta_casa", ""))
+        if "ruta_oficina" in f:
+            Parametro.set("ruta_oficina", f.get("ruta_oficina", ""))
+        if "banco_info" in f:
+            Parametro.set("banco_info", f.get("banco_info", "").replace("\r\n", "\n"))
+        if a:
+            if "anio_gravable" in f:
+                a.anio_gravable = int(f.get("anio_gravable") or a.anio_gravable)
+            if "prefijo" in f:
+                a.prefijo = f.get("prefijo", a.prefijo)
+            if "ipc" in f:
+                a.ipc = float(f.get("ipc") or 0)
+            if "valor_minima" in f:
+                a.valor_minima = float(f.get("valor_minima") or 0)
+            if "valor_minima_primera" in f:
+                a.valor_minima_primera = float(f.get("valor_minima_primera") or 0)
+            if "concepto" in f:
+                a.concepto = f.get("concepto", "")
+        db.session.commit()
+        flash("Parámetros guardados", "ok")
+        return redirect(url_for("main.parametros"))
+    ub, rc, ro = _ubicacion_datos()
+    return render_template("parametros.html", a=a, ubicacion=ub,
+                           ruta_casa=rc, ruta_oficina=ro)
+
+
+def _archivo_ubicacion():
+    """Archivo LOCAL por PC donde vive la ubicación activa (no va en la BD:
+    la BD se sincroniza por OneDrive y llegaría la ubicación del otro PC)."""
+    d = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "SistemaCobros")
+    os.makedirs(d, exist_ok=True)
+    return os.path.join(d, "ubicacion.txt")
+
+
+def _ubicacion_datos():
+    """(ubicacion_activa, ruta_casa, ruta_oficina). La ubicación vive en archivo local
+    por PC (como el Maestro con su config): la primera vez se autodetecta por la ruta
+    que exista en este PC; después el toggle la cambia con 1 clic y cada PC se acuerda."""
+    rc = (Parametro.get("ruta_casa", "") or "").strip()
+    ro = (Parametro.get("ruta_oficina", "") or "").strip()
+    ub = ""
+    try:
+        with open(_archivo_ubicacion(), encoding="utf-8") as fh:
+            ub = fh.read().strip().upper()
+    except OSError:
+        pass
+    if ub not in ("CASA", "OFICINA"):
+        # autodetección: gana la ruta que exista en este PC; si no, la letra conocida
+        if rc and os.path.isdir(_rebase(rc)):
+            ub = "CASA"
+        elif ro and os.path.isdir(_rebase(ro)):
+            ub = "OFICINA"
+        elif os.path.isdir("Z:\\"):
+            ub = "CASA"
+        elif os.path.isdir("C:\\Users"):
+            ub = "OFICINA"
+        else:
+            ub = ""
+        if ub:
+            _guardar_ubicacion(ub)
+    return ub, rc, ro
+
+
+def _guardar_ubicacion(ub):
+    try:
+        with open(_archivo_ubicacion(), "w", encoding="utf-8") as fh:
+            fh.write(ub)
+    except OSError:
+        pass
+
+
+def _ruta_maestro_activa():
+    """Ruta del maestro según la ubicación activa (sin mezclar rutas del otro PC)."""
+    ub, rc, ro = _ubicacion_datos()
+    if ub == "CASA" and rc:
+        return _rebase(rc)
+    if ub == "OFICINA" and ro:
+        return _rebase(ro)
+    general = _rebase(Parametro.get("ruta_maestro", ""))
+    if general:
+        return general
+    return rutas_comunes.ruta_maestro_defecto()
+
+
+@bp.route("/parametros/ubicacion", methods=["POST"])
+def parametros_ubicacion():
+    """Toggle CASA <-> OFICINA (1 clic, como en el Maestro). Se guarda LOCAL en este PC."""
+    actual, rc, ro = _ubicacion_datos()
+    nuevo = "OFICINA" if actual == "CASA" else "CASA"
+    _guardar_ubicacion(nuevo)
+    activa = _ruta_maestro_activa()
+    ok = bool(activa and os.path.isdir(activa))
+    flash(f"Ubicación cambiada a {nuevo} (guardada en este PC)."
+          + (" Ruta del maestro encontrada." if ok
+             else " Ojo: la ruta del maestro de esa ubicación no existe en este PC; revísala en Parámetros."),
+          "ok" if ok else "error")
+    return redirect(url_for("main.parametros"))
+
+
+@bp.route("/anios")
+def anios():
+    return render_template("anios.html",
+                           anios=AnioCobro.query.order_by(AnioCobro.anio_cobro.desc()).all())
+
+
+@bp.route("/anios/nuevo", methods=["POST"])
+def anio_nuevo():
+    f = request.form
+    anio_cobro = int(f.get("anio_cobro"))
+    anterior = AnioCobro.query.order_by(AnioCobro.anio_cobro.desc()).first()
+    ipc = float(f.get("ipc") or 0)
+    nuevo = AnioCobro(
+        anio_cobro=anio_cobro,
+        anio_gravable=anio_cobro - 1,
+        prefijo=str(anio_cobro)[2:],
+        ipc=ipc,
+        valor_minima=(anterior.valor_minima * (1 + ipc)) if anterior else 0,
+        valor_minima_primera=(anterior.valor_minima_primera * (1 + ipc)) if anterior else 0,
+        concepto=f"Asesoría tributaria año gravable {anio_cobro - 1}",
+        emisor_nombre=anterior.emisor_nombre if anterior else "",
+        emisor_cc=anterior.emisor_cc if anterior else "",
+        emisor_direccion=anterior.emisor_direccion if anterior else "",
+        emisor_telefonos=anterior.emisor_telefonos if anterior else "",
+        emisor_ciudad=anterior.emisor_ciudad if anterior else "",
+        banco_info=anterior.banco_info if anterior else "",
+        numero_siguiente=1, consecutivo_inicial=1, activo=False,
+    )
+    db.session.add(nuevo)
+    # arrastre: presupuesto nuevo = valor de la última cuenta emitida (o presupuesto si nunca se emitió)
+    if anterior:
+        for cli in Cliente.query.filter_by(activo=True):
+            ult = (CuentaLinea.query.join(CuentaCobro)
+                   .filter(CuentaLinea.cliente_id == cli.id,
+                           CuentaCobro.anio_cobro_id == anterior.id,
+                           CuentaLinea.estado == "ACTIVA",
+                           CuentaCobro.estado.in_(("ENVIADA", "PAGADA")))
+                   .order_by(CuentaCobro.numero.desc()).first())
+            base = None
+            if ult:
+                base = ult.valor
+            else:
+                p = PresupuestoCliente.query.filter_by(cliente_id=cli.id,
+                                                       anio_cobro=anterior.anio_cobro).first()
+                base = p.valor if p else None
+            if base:
+                db.session.add(PresupuestoCliente(cliente_id=cli.id, anio_cobro=anio_cobro,
+                                                  valor=round(base * (1 + ipc), -2)))
+    db.session.commit()
+    flash(f"Año {anio_cobro} creado con arrastre IPC {ipc:.1%}. Revísalo y actívalo.", "ok")
+    return redirect(url_for("main.anios"))
+
+
+@bp.route("/anios/<int:aid>/activar", methods=["POST"])
+def anio_activar(aid):
+    AnioCobro.query.update({AnioCobro.activo: False})
+    a = db.session.get(AnioCobro, aid)
+    if a:
+        a.activo = True
+    db.session.commit()
+    return redirect(url_for("main.anios"))
+
+
+# ---------------- Importación ----------------
+@bp.route("/importar", methods=["GET", "POST"])
+def importar():
+    if request.method == "GET":
+        return render_template("importar.html")
+    f = request.files.get("archivo")
+    if not f or not f.filename:
+        flash("Selecciona el archivo Excel", "error")
+        return redirect(url_for("main.importar"))
+    os.makedirs(current_app.instance_path, exist_ok=True)
+    ruta = os.path.join(current_app.instance_path, "import.xlsx")
+    f.save(ruta)
+    from .importar import importar as do_import
+    try:
+        stats = do_import(ruta)
+        flash(f"Importación lista: {stats['clientes']} clientes nuevos, "
+              f"{stats['presupuestos']} presupuestos, {stats['cuentas']} cuentas del año actual.",
+              "ok")
+    except Exception as e:
+        db.session.rollback()
+        flash(f"Error importando: {e}", "error")
+    return redirect(url_for("main.dashboard"))
+
+
+# ---------------- API auxiliar ----------------
+@bp.route("/api/clientes/valor/<int:cid>")
+def api_valor_cliente(cid):
+    a = anio_actual()
+    p = PresupuestoCliente.query.filter_by(cliente_id=cid, anio_cobro=a.anio_cobro).first() if a else None
+    return jsonify({"valor": p.valor if p else 0})

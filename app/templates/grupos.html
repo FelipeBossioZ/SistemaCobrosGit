@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}Grupos familiares{% endblock %}
+{% block content %}
+<h3 class="mb-3">Grupos familiares</h3>
+<p class="text-muted small">Los miembros del grupo comparten cuenta de cobro. Marca con
+<span class="badge bg-info text-dark">pagador</span> a nombre de quién se emite. Dentro de un grupo
+puedes tener subgrupos: simplemente crea otro grupo con los miembros que quieras.</p>
+
+<div class="row g-4">
+  <div class="col-lg-7">
+    <form class="row g-2 mb-3" method="post" action="{{ url_for('main.grupo_nuevo') }}">
+      <div class="col"><input class="form-control" name="nombre" placeholder="Nombre del grupo (ej: G26 o FAMILIA RESTREPO POSADA)" required></div>
+      <div class="col-auto"><button class="btn btn-primary"><i class="bi bi-plus-lg"></i> Crear grupo</button></div>
+    </form>
+
+    {% for g in grupos %}
+    <div class="card mb-3">
+      <div class="card-header bg-white d-flex justify-content-between align-items-center">
+        <strong class="d-flex align-items-center gap-2 flex-wrap">
+          <span id="nombre-grupo-{{ g.id }}">{{ g.nombre }}</span>
+          <form class="d-inline" method="post" action="{{ url_for('main.grupo_renombrar', gid=g.id) }}" id="form-ren-{{ g.id }}">
+            <input class="form-control form-control-sm d-none" style="width: 240px;" type="text" name="nombre"
+                   value="{{ g.nombre }}" maxlength="150" required
+                   onkeydown="if(event.key==='Enter'){event.preventDefault();this.form.submit()}else if(event.key==='Escape'){cancelarRenombrar({{ g.id }})}">
+          </form>
+          <button type="button" class="btn btn-sm btn-outline-secondary py-0" title="Renombrar grupo (Enter guarda, Esc cancela)"
+                  onclick="empezarRenombrar({{ g.id }})"><i class="bi bi-pencil"></i></button>
+          <span class="badge bg-light text-dark">{{ g.miembros.count() }} miembros</span>
+          {% set faltan = g.miembros|selectattr('decl_ok', 'equalto', False)|list %}
+          {% if faltan %}<span class="badge bg-warning text-dark"
+              title="Faltan declaraciones de: {{ faltan|map(attribute='nombre')|join(', ') }}">sin cobrar</span>
+          {% else %}<span class="badge bg-success" title="Todos con renta presentada o no obligados">al día · cobrable</span>{% endif %}
+        </strong>
+        <div class="d-flex gap-2 align-items-center">
+          {% if g.pagador %}
+          <form method="post" action="{{ url_for('main.grupo_cuenta_expresa', gid=g.id) }}"
+                onsubmit="return confirm('Expreso completo del grupo {{ g.nombre }}: crea la cuenta (a nombre de {{ g.pagador.nombre }}), genera el PDF y deja el borrador de Outlook (.eml) listo. ¿Seguir?');">
+            <button class="btn btn-sm btn-outline-primary" title="Expreso completo: crea con lo presupuestado de los miembros activos, PDF y borrador de Outlook"><i class="bi bi-lightning-charge"></i> cuenta del grupo</button>
+          </form>
+          {% else %}<span class="small text-warning" title="Marca un pagador para poder crear la cuenta del grupo">sin pagador</span>{% endif %}
+          <form method="post" action="{{ url_for('main.grupo_eliminar', gid=g.id) }}"
+                onsubmit="return confirm('¿Eliminar el grupo? Los clientes quedan sin grupo.');">
+            <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+          </form>
+        </div>
+      </div>
+      <div class="table-responsive">
+      <table class="table table-sm mb-0">
+        <tbody>
+        {% for cli in g.miembros %}
+          <tr>
+            <td>
+              <a href="{{ url_for('main.cliente_detalle', cid=cli.id) }}">{{ cli.nombre }}</a>
+              {% if cli.es_pagador %}<span class="badge bg-info text-dark">pagador · sale a su nombre</span>{% endif %}
+              {% if not cli.decl_ok %}<span class="badge bg-warning text-dark">falta renta</span>{% endif %}
+            </td>
+            <td class="text-end" style="width: 240px;">
+              {% if not cli.es_pagador %}
+              <form class="d-inline" method="post" action="{{ url_for('main.grupo_pagador', gid=g.id, cid=cli.id) }}">
+                <button class="btn btn-sm btn-outline-info" title="Hacer pagador del grupo"><i class="bi bi-person-check"></i> pagador</button>
+              </form>
+              {% endif %}
+              <form class="d-inline" method="post" action="{{ url_for('main.grupo_quitar', gid=g.id, cid=cli.id) }}">
+                <button class="btn btn-sm btn-outline-secondary" title="Quitar del grupo"><i class="bi bi-x-lg"></i></button>
+              </form>
+            </td>
+          </tr>
+        {% else %}
+          <tr><td class="text-muted small p-3">Sin miembros. Agrega clientes desde el panel derecho.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+    </div>
+    {% else %}
+      <p class="text-muted">No hay grupos creados.</p>
+    {% endfor %}
+  </div>
+
+  <div class="col-lg-5">
+    <div class="card">
+      <div class="card-header bg-white fw-semibold">Clientes sin grupo</div>
+      <div class="card-body p-0" style="max-height: 560px; overflow-y: auto;">
+        <table class="table table-sm mb-0">
+          <tbody>
+          {% for cli in clientes_sin_grupo %}
+            <tr><td class="small">{{ cli.nombre }}</td><td></td></tr>
+          {% else %}
+            <tr><td class="text-muted small p-3">Todos los clientes tienen grupo.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      <div class="p-3">
+          <div class="mb-2 small fw-semibold">Anclar un cliente a un grupo:</div>
+          {% for cli in clientes_sin_grupo %}
+          <form class="row g-1 mb-1 align-items-center" method="post" action="{{ url_for('main.grupo_agregar', gid=0) }}" data-cli="{{ cli.id }}">
+            <input type="hidden" name="cliente_id" value="{{ cli.id }}">
+            <div class="col"><span class="small">{{ cli.nombre }}</span></div>
+            <div class="col-auto">
+              <select class="form-select form-select-sm" name="gid_sel" required>
+                <option value="" disabled selected>grupo...</option>
+                {% for g in grupos %}<option value="{{ g.id }}">{{ g.nombre }}</option>{% endfor %}
+              </select>
+            </div>
+            <div class="col-auto form-check">
+              <input class="form-check-input" type="checkbox" name="pagador" id="pg-{{ cli.id }}">
+              <label class="form-check-label small" for="pg-{{ cli.id }}">pagador</label>
+            </div>
+            <div class="col-auto"><button class="btn btn-sm btn-outline-primary">→</button></div>
+          </form>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+function empezarRenombrar(id){
+  document.getElementById('nombre-grupo-' + id).classList.add('d-none');
+  var i = document.querySelector('#form-ren-' + id + ' input');
+  i.classList.remove('d-none'); i.focus(); i.select();
+}
+function cancelarRenombrar(id){
+  var i = document.querySelector('#form-ren-' + id + ' input');
+  i.classList.add('d-none');
+  i.value = i.getAttribute('value');  // restaura el nombre original
+  document.getElementById('nombre-grupo-' + id).classList.remove('d-none');
+}
+// El grupo se elige en el select; reescribimos la acción del form con el gid elegido
+document.querySelectorAll("form[data-cli]").forEach(function(f){
+  f.addEventListener("submit", function(e){
+    var sel = f.querySelector("select[name=gid_sel]");
+    if(!sel.value){ e.preventDefault(); return; }
+    f.action = "/grupos/" + sel.value + "/agregar";
+  });
+});
+</script>
+{% endblock %}

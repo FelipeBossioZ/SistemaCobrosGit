@@ -1,0 +1,269 @@
+{% extends "base.html" %}
+{% block title %}Cuenta {{ cuenta.numero_formateado }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3 flex-wrap gap-2">
+  <div>
+    <h3 class="mb-1">Cuenta de Cobro <span class="text-primary">{{ cuenta.numero_formateado }}</span>
+      <span class="badge badge-estado-{{ cuenta.estado }} fs-6">{{ cuenta.estado }}</span></h3>
+    <div class="text-muted small">
+      Año de cobro {{ cuenta.anio.anio_cobro }} · gravable {{ cuenta.anio.anio_gravable }} ·
+      {{ cuenta.lineas|selectattr('estado','equalto','ACTIVA')|list|length }} cliente(s)
+      {% if cuenta.estado == 'ANULADA' %} · <strong class="text-danger">NÚMERO CONSERVADO, NO REUTILIZADO</strong>{% endif %}
+    </div>
+  </div>
+  <div class="d-flex gap-2">
+    <button class="btn btn-primary" data-pdf="{{ url_for('main.cuenta_pdf', cid=cuenta.id) }}"
+            data-titulo="Cuenta {{ cuenta.numero_formateado }}">
+      <i class="bi bi-filetype-pdf"></i> Ver / Generar PDF</button>
+    <a class="btn btn-outline-secondary" href="{{ url_for('main.cuentas') }}">Volver</a>
+  </div>
+</div>
+
+<!-- Acciones rápidas -->
+<div class="card mb-4">
+  <div class="card-header bg-white fw-semibold">Acciones rápidas</div>
+  <div class="card-body d-flex flex-wrap gap-2">
+    {% set pagador = cuenta.pagador_principal %}
+    {% if pagador and pagador.grupo_id and cuenta.estado != 'ANULADA' %}
+    <form method="post" action="{{ url_for('main.cuenta_sincronizar_grupo', cid=cuenta.id) }}" class="d-inline"
+          title="Agrega a esta cuenta los miembros del grupo que falten (con su presupuesto) y regenera el PDF"
+          onsubmit="return confirm('Sincronizar grupo {{ pagador.grupo.nombre }}: se agregan los miembros que falten con su presupuesto y se regenera el PDF. ¿Seguir?');">
+      <button class="btn btn-outline-info btn-sm"><i class="bi bi-people-fill"></i> Sincronizar grupo</button>
+    </form>
+    {% endif %}
+    <form method="post" action="{{ url_for('main.cuenta_descargar', cid=cuenta.id) }}" class="d-inline"
+          title="Guarda el PDF directamente en la carpeta configurada en Parámetros">
+      <button class="btn btn-outline-primary btn-sm"><i class="bi bi-download"></i> Descargar a carpeta</button>
+    </form>
+    <button class="btn btn-outline-warning btn-sm" data-accion="enviar" data-cid="{{ cuenta.id }}"
+            data-numero="{{ cuenta.numero_formateado }}"><i class="bi bi-send"></i> Registrar envío</button>
+    <button class="btn btn-outline-success btn-sm" data-accion="pago" data-cid="{{ cuenta.id }}"
+            data-numero="{{ cuenta.numero_formateado }}" data-saldo="{{ cuenta.saldo|int }}">
+      <i class="bi bi-cash-coin"></i> Registrar pago</button>
+    <button class="btn btn-outline-danger btn-sm" data-accion="ajuste" data-cid="{{ cuenta.id }}"
+            data-numero="{{ cuenta.numero_formateado }}">
+      <i class="bi bi-arrow-down-circle"></i> Ajuste / descuento</button>
+    <button class="btn btn-outline-primary btn-sm" data-accion="outlook" data-cid="{{ cuenta.id }}"
+            data-numero="{{ cuenta.numero_formateado }}" data-email="{{ pagador.email if pagador }}">
+      <i class="bi bi-envelope-paper"></i> Redactar correo</button>
+  </div>
+</div>
+
+<div class="row g-4">
+  <div class="col-lg-7">
+    <div class="card mb-4">
+      <div class="card-header bg-white fw-semibold d-flex justify-content-between">
+        <span>Líneas de la cuenta</span>
+        {% if cuenta.estado != 'ANULADA' %}
+        <form class="d-flex gap-1" method="post" action="{{ url_for('main.cuenta_linea_agregar', cid=cuenta.id) }}">
+          <select class="form-select form-select-sm" name="cliente_id" required style="width: 280px;">
+            <option value="" disabled selected>Agregar cliente…</option>
+            {% for cli in todosClientes %}<option value="{{ cli.id }}">{{ cli.nombre }}</option>{% endfor %}
+          </select>
+          <button class="btn btn-sm btn-outline-primary">+</button>
+        </form>
+        {% endif %}
+      </div>
+      <div class="table-responsive">
+      <table class="table table-sm mb-0">
+        <thead><tr><th>Cliente</th><th>C.C./NIT</th><th style="width: 170px;">Valor</th><th></th></tr></thead>
+        <tbody>
+        {% for l in cuenta.lineas %}
+          <tr>
+            <td>
+              <a href="{{ url_for('main.cliente_detalle', cid=l.cliente.id) }}">{{ l.cliente.nombre }}</a>
+              {% if cuenta.pagador_cliente_id == l.cliente_id %}<span class="badge bg-primary">pagador de esta cuenta</span>
+              {% elif l.cliente.es_pagador %}<span class="badge bg-info text-dark">pagador del grupo</span>{% endif %}
+              {% if l.estado == 'ANULADA' %}<span class="badge bg-secondary">anulada</span>{% endif %}
+              {% if l.estado == 'ACTIVA' %}
+              <form class="mt-1" method="post" action="{{ url_for('main.linea_concepto', lid=l.id) }}">
+                <input class="form-control form-control-sm" name="concepto" value="{{ l.concepto }}"
+                       placeholder="Concepto propio (opcional; vacío = el del año)">
+              </form>
+              {% endif %}
+            </td>
+            <td class="small">{{ l.cliente.nit_formateado }}</td>
+            <td>
+              {% if l.estado == 'ACTIVA' %}
+              <form class="d-flex gap-1" method="post" action="{{ url_for('main.linea_valor', lid=l.id) }}">
+                <input class="form-control form-control-sm text-end" name="valor" value="{{ l.valor|int }}" type="number" step="1000">
+                <button class="btn btn-sm btn-outline-secondary">✓</button>
+              </form>
+              {% else %}<span class="num">{{ l.valor|int }}</span>{% endif %}
+            </td>
+            <td class="text-end">
+              <form method="post" action="{{ url_for('main.linea_anular', lid=l.id) }}">
+                <button class="btn btn-sm btn-outline-{% if l.estado == 'ACTIVA' %}danger{% else %}success{% endif %}">
+                  {{ 'Anular' if l.estado == 'ACTIVA' else 'Reactivar' }}</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr class="fw-bold border-top">
+            <td colspan="2" class="text-end">TOTAL</td>
+            <td class="num">{{ (cuenta.total)|money }}</td><td></td>
+          </tr>
+          {% if cuenta.total_ajustes %}
+          <tr><td colspan="2" class="text-end text-muted">Ajustes</td>
+            <td class="num text-danger">- {{ (cuenta.total_ajustes)|money }}</td><td></td></tr>
+          {% endif %}
+          <tr><td colspan="2" class="text-end text-muted">Pagado</td>
+            <td class="num text-success">{{ (cuenta.total_pagado)|money }}</td><td></td></tr>
+          <tr class="fw-bold"><td colspan="2" class="text-end">SALDO</td>
+            <td class="num {% if cuenta.saldo > 0 %}text-danger{% endif %}">{{ (cuenta.saldo)|money }}</td><td></td></tr>
+        </tfoot>
+      </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header bg-white fw-semibold"><i class="bi bi-sticky"></i> Notas</div>
+      <div class="card-body">
+        <form method="post" action="{{ url_for('main.cuenta_nota', cid=cuenta.id) }}">
+          <label class="form-label small mb-1 text-warning-emphasis"><i class="bi bi-lock"></i> Nota interna
+            <span class="text-muted">(solo usted la ve — nunca sale en el PDF)</span></label>
+          <textarea class="form-control form-control-sm mb-2" name="nota" rows="2"
+                    placeholder="Ej: prometió pagar a fin de mes, llamar la próxima semana...">{{ cuenta.nota }}</textarea>
+          <label class="form-label small mb-1"><i class="bi bi-file-earmark-text"></i> Observaciones del PDF
+            <span class="text-muted">(sí aparecen en el documento, sección OBS.)</span></label>
+          <textarea class="form-control form-control-sm mb-2" name="observaciones" rows="2"
+                    placeholder="Ej: favor consignar a la cuenta indicada...">{{ cuenta.observaciones }}</textarea>
+          <button class="btn btn-sm btn-outline-secondary">Guardar notas</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-5">
+    <div class="card mb-4">
+      <div class="card-header bg-white fw-semibold">Pagador de esta cuenta (a nombre de quién sale)</div>
+      <div class="card-body">
+        <form class="row g-2" method="post" action="{{ url_for('main.cuenta_pagador', cid=cuenta.id) }}">
+          <div class="col-8">
+            <select class="form-select form-select-sm" name="pagador_id">
+              <option value="">— Automático: pagador del grupo / primera línea —</option>
+              {% for cli in todosPagadores %}
+              <option value="{{ cli.id }}" {{ 'selected' if cuenta.pagador_cliente_id == cli.id }}>{{ cli.nombre }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-4"><button class="btn btn-outline-primary btn-sm">Fijar</button></div>
+        </form>
+        <div class="form-text small">Actualmente sale a nombre de: <strong>{{ cuenta.pagador_principal.nombre }}</strong></div>
+      </div>
+    </div>
+
+    <div class="card mb-4">
+      <div class="card-header bg-white fw-semibold">Fecha de la cuenta</div>
+      <div class="card-body">
+        <form class="d-flex gap-2" method="post" action="{{ url_for('main.cuenta_fecha', cid=cuenta.id) }}">
+          <input class="form-control" type="date" name="fecha" value="{{ cuenta.fecha.isoformat() if cuenta.fecha }}">
+          <button class="btn btn-outline-secondary btn-sm">Actualizar</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="card mb-4">
+      <div class="card-header bg-white fw-semibold">Envíos</div>
+      <div class="card-body">
+        {% for e in cuenta.envios %}
+          <div class="small mb-1 d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-send"></i> <strong>{{ e.medio }}</strong> · {{ e.fecha.strftime('%d/%m/%Y') }}
+            {% if e.nota %}· {{ e.nota }}{% endif %}</span>
+            <form method="post" class="ms-2"
+                  action="{{ url_for('main.envio_eliminar', cid=cuenta.id, eid=e.id) }}"
+                  onsubmit="return confirm('¿Eliminar este envío registrado? La cuenta {{ cuenta.numero_formateado }} vuelve a BORRADOR (sirve para deshacer un envío marcado por error).');">
+              <button class="btn btn-outline-secondary btn-sm py-0" title="Eliminar este envío (deshacer)">✕</button>
+            </form>
+          </div>
+        {% else %}
+          <p class="text-muted small mb-2">Sin envíos registrados.</p>
+        {% endfor %}
+        {% if cuenta.estado != 'ANULADA' %}
+        <form class="row g-2 mt-1" method="post" action="{{ url_for('main.cuenta_enviar', cid=cuenta.id) }}">
+          <div class="col-6">
+            <select class="form-select form-select-sm" name="medio">
+              <option>Correo</option><option>WhatsApp</option><option>Correo y WhatsApp</option>
+              <option>Físico</option><option>Otro</option>
+            </select>
+          </div>
+          <div class="col-6"><input class="form-control form-control-sm" type="date" name="fecha"></div>
+          <div class="col-12"><input class="form-control form-control-sm" name="nota" placeholder="Nota (opcional)"></div>
+          <div class="col-12"><button class="btn btn-warning btn-sm"><i class="bi bi-send"></i> Registrar envío</button></div>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card mb-4">
+      <div class="card-header bg-white fw-semibold">Pagos</div>
+      <div class="card-body">
+        {% for p in cuenta.pagos %}
+          <div class="small mb-1"><i class="bi bi-cash"></i> <strong>{{ (p.valor)|money }}</strong> · {{ p.forma }} · {{ p.fecha.strftime('%d/%m/%Y') }}
+            {% if p.nota %}· {{ p.nota }}{% endif %}</div>
+        {% else %}
+          <p class="text-muted small mb-2">Sin pagos registrados.</p>
+        {% endfor %}
+        {% if cuenta.estado != 'ANULADA' %}
+        <form class="row g-2 mt-1" method="post" action="{{ url_for('main.cuenta_pago', cid=cuenta.id) }}">
+          <div class="col-5"><input class="form-control form-control-sm" name="valor" type="number" step="1000" placeholder="Valor" required></div>
+          <div class="col-7">
+            <select class="form-select form-select-sm" name="forma">
+              {% for f in formas %}<option>{{ f }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="col-6"><input class="form-control form-control-sm" type="date" name="fecha"></div>
+          <div class="col-6"><input class="form-control form-control-sm" name="nota" placeholder="Nota"></div>
+          <div class="col-12"><button class="btn btn-success btn-sm"><i class="bi bi-cash-coin"></i> Registrar pago o abono</button></div>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card mb-4">
+      <div class="card-header bg-white fw-semibold">Ajustes / descuentos</div>
+      <div class="card-body">
+        {% for a in cuenta.ajustes %}
+          <div class="small mb-1"><i class="bi bi-arrow-down-circle"></i> -{{ (a.valor)|money }} · {{ a.fecha.strftime('%d/%m/%Y') }}
+            {% if a.motivo %}· {{ a.motivo }}{% endif %}</div>
+        {% else %}
+          <p class="text-muted small mb-2">Sin ajustes (ej. autodescuento del cliente).</p>
+        {% endfor %}
+        {% if cuenta.estado != 'ANULADA' %}
+        <form class="row g-2 mt-1" method="post" action="{{ url_for('main.cuenta_ajuste', cid=cuenta.id) }}">
+          <div class="col-5"><input class="form-control form-control-sm" name="valor" type="number" step="1000" placeholder="Valor" required></div>
+          <div class="col-7"><input class="form-control form-control-sm" name="motivo" placeholder="Motivo (ej: autodescuento)"></div>
+          <div class="col-6"><input class="form-control form-control-sm" type="date" name="fecha"></div>
+          <div class="col-6"><button class="btn btn-outline-danger btn-sm"><i class="bi bi-arrow-down-circle"></i> Registrar ajuste</button></div>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header bg-white fw-semibold text-danger">Zona de peligro</div>
+      <div class="card-body">
+        {% if cuenta.estado == 'ANULADA' %}
+          <div class="small mb-2"><strong>Motivo de anulación:</strong> {{ cuenta.motivo_anulacion or '(no registrado)' }}</div>
+          <form method="post" action="{{ url_for('main.cuenta_reactivar', cid=cuenta.id) }}">
+            <button class="btn btn-outline-success btn-sm">Reactivar cuenta (recalcula estado)</button>
+          </form>
+        {% elif cuenta.envios.count() == 0 %}
+          <form method="post" action="{{ url_for('main.cuenta_eliminar', cid=cuenta.id) }}"
+                onsubmit="return confirm('¿Eliminar la cuenta {{ cuenta.numero_formateado }}? Se libera el número {{ cuenta.numero_formateado }} para la próxima cuenta.');">
+            <button class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i> Eliminar cuenta (libera el número)</button>
+          </form>
+          <div class="form-text small">Sin envíos registrados: se puede eliminar y el número se reutiliza.</div>
+        {% else %}
+          <button class="btn btn-outline-danger btn-sm" data-accion="anular" data-cid="{{ cuenta.id }}"
+                  data-numero="{{ cuenta.numero_formateado }}">
+            <i class="bi bi-x-octagon"></i> Anular cuenta (con motivo)</button>
+          <div class="form-text small">Tiene envíos: no se elimina; se anula con motivo obligatorio y el número NO se reutiliza.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

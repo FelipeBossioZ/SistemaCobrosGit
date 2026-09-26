@@ -117,6 +117,11 @@ Decisiones de Felipe (cerradas): 1) el presupuesto NUNCA se digita: se construye
 - Hallazgo cosmético corregido: los subtotales traen centavos (Exo 378.408,75; ActExt 151.363,5; RUB 75.681,75) y suman 1.659.999 para Sergio vs 1.660.000 visual. Con base con centavos el total da exacto. La tolerancia ±$1.000 del confirmar cubre cualquier resto.
 - Pendiente: PASAR ESTO A PRODUCCION junto con la proxima tanda (no se ha pasado el 793b59c; produccion queda en c2e83bf que todavia calcula en JS).
 
+## 4g. PYTHON-CALC A PRODUCCION + FASE C ARRANCADA (26/09 ~13:55)
+- Felipe aprobo el 793b59c y pidió pasar a producción Y de una vez hacer la Fase C (Excel auditoria debio-cobrarse-vs-cobrado). Integracion Maestro+Cobros: se empieza LA PROXIMA SEMANA.
+- Produccion actualizada: c2e83bf -> 5b74ebf (solo routes.py + cliente_detalle.html; backups .antes-pythoncalc.bak en Respaldo codigo 2026-09-26; smoke test 200 en 6 rutas incluida /clientes/1/asesorias-estado con claves base/confirmado/filas/maestro_ok/ok/presup/sobra/total).
+- FASE C (en construccion en 777): tabla ENVIADA/PAGADA del anio, por cliente: presupuesto vs paquete cobrado (cuentas ENVIADA+PAGADA del anio activo), columnas estado, debio (paquete al confirmar), cobrado (valor linea cliente), diferencia. Criterios definidos: 'debio' = suma de subtotales de asesorias al momento del primer confirmar del anio (aprox: presupuesto actual cuando no hay historial de paquete); PENDIENTE de validar con Felipe el caso 'aqui fue donde se cobro de menos' (Sergio 1.660.000 presup vs 1.054.545 cobrado).
+
 ## 5. PREGUNTAS ABIERTAS (las respuestas llegan por chat)
 Q1 renta base: ¿guardar al confirmar (recomendado, auditable) o derivar en vivo?
 Q2 sin match en maestro: se marca y se lista (propuesto y aceptado en linea general: color + nota visible).

@@ -282,14 +282,16 @@ document.addEventListener("change", e => {
   const t = e.target;
   // --- ficha del cliente ---
   const tr = t.closest("tr[data-ac]");
-  if (tr && (t.classList.contains("ac-incluir") || t.classList.contains("ac-pct") || t.classList.contains("ac-val"))) {
+  if (tr && (t.classList.contains("ac-incluir") || t.classList.contains("ac-pct") || t.classList.contains("ac-val") || t.classList.contains("ac-cant"))) {
     const body = new FormData();
     body.append("asesoria_id", tr.dataset.ac);
     body.append("incluir", tr.querySelector(".ac-incluir").checked ? "1" : "0");
     const p = tr.querySelector(".ac-pct");
     const v = tr.querySelector(".ac-val");
+    const c = tr.querySelector(".ac-cant");
     if (p) body.append("pct", p.value);
     if (v) body.append("valor", v.value);
+    if (c) body.append("cantidad", c.value);
     fetch(location.pathname + "/asesorias", { method: "POST", body })
       .then(r => r.json()).then(j => {
         if (!j.ok) return;

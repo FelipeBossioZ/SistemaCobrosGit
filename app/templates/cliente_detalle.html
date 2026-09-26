@@ -54,6 +54,7 @@
   <div class="table-responsive">
   <table class="table table-sm mb-0">
     <thead><tr><th style="width: 34px;"></th><th>Asesoría</th><th class="num">% / valor</th>
+      <th class="num" title="Cantidad de presentaciones del año">Cant.</th>
       <th class="num" title="Lo que cobra la oficina por esta asesoría">Subtotal</th><th>Estándar</th></tr></thead>
     <tbody>
     {% for f in filas_asesorias %}
@@ -62,19 +63,29 @@
           <input class="form-check-input ac-incluir" type="checkbox" {% if f.incluir %}checked{% endif %}
                  title="Incluir en el paquete de {{ a.anio_cobro if a }}">
         </td>
-        <td>{{ f.it.nombre }}{% if f.it.base_min %} <span class="text-muted small">({{ f.it.base_min }})</span>{% endif %}</td>
-        <td class="num" style="max-width: 190px;">
-          {% if f.it.defecto_pct > 0 %}
-            <input class="form-control form-control-sm text-end ac-pct" type="number" step="5" min="0" max="200"
-                   value="{{ '%g'|format(f.pct) if f.pct is not none }}" placeholder="{{ '%g'|format(f.it.defecto_pct) }}">
-          {% else %}
+        <td>
+          {{ f.it.nombre }}{% if f.it.base_min %} <span class="text-muted small">({{ f.it.base_min }})</span>{% endif %}
+          {% if f.en_maestro %}<i class="bi bi-cloud-check text-success" title="Presentada en el maestro{% if f.estados %} ({{ f.estados|join(', ')|lower }}){% endif %}"></i>{% endif %}
+          {% if f.nueva %}<span class="badge text-bg-success ms-1" style="font-size:.62em;">nuevo del maestro</span>{% endif %}
+        </td>
+        <td class="num" style="max-width: 150px;">
+          {% if f.fija %}
             <input class="form-control form-control-sm text-end ac-val" type="number" step="1000" min="0"
-                   value="{{ '%d'|format(f.valor|round|int) if f.valor is not none }}" placeholder="{{ '%d'|format(f.it.defecto_valor|int) }}">
+                   value="{{ '%d'|format(f.valor|round|int) if f.valor is not none else '' }}" placeholder="{{ '%d'|format(f.it.defecto_valor|int) }}">
+          {% else %}
+            <input class="form-control form-control-sm text-end ac-pct" type="number" step="5" min="0" max="200"
+                   value="{{ '%g'|format(f.pct) if f.pct is not none else '' }}" placeholder="{{ '%g'|format(f.it.defecto_pct) }}">
           {% endif %}
+        </td>
+        <td class="num">
+          {% if f.fija %}
+            <input class="form-control form-control-sm text-end ac-cant" type="number" step="1" min="1" style="max-width: 84px;"
+                   value="{{ f.cantidad or 1 }}" title="Cantidad (meses, bimestres...)">
+          {% else %}<span class="text-muted">·</span>{% endif %}
         </td>
         <td class="num fw-semibold ac-sub">{{ f.subtotal|money if f.subtotal else '·' }}</td>
         <td class="small text-muted">
-          {% if f.it.defecto_pct > 0 %}{{ '%g'|format(f.it.defecto_pct) }}%{% else %}{{ f.it.defecto_valor|money if f.it.defecto_valor else 'libre' }}{% endif %}
+          {% if f.fija %}{{ f.it.defecto_valor|money if f.it.defecto_valor else 'libre' }}{% else %}{{ '%g'|format(f.it.defecto_pct) }}%{% endif %}
         </td>
       </tr>
     {% else %}
@@ -83,9 +94,19 @@
     </tbody>
     <tfoot data-presup="{{ presup_act or 0 }}">
       <tr class="table-light">
-        <td colspan="3" class="text-end fw-semibold">Total asesorías {{ a.anio_cobro if a }}</td>
+        <td colspan="3" class="text-end small">Base de cálculo (% de renta): <b id="ases-base">{{ base_asesorias|money if base_asesorias else '·' }}</b>
+          <span class="text-muted small">(derivada del presupuesto; queda amarrada al confirmar)</span></td>
+        <td class="text-end small text-muted">Presup: <span id="ases-presup">{{ presup_act|money if presup_act else '' }}</span></td>
         <td class="num fw-bold" id="ases-total">{{ total_asesorias|money }}</td>
         <td class="small text-muted" id="ases-dif">{% if presup_act %}{% set d = total_asesorias - presup_act %}{% if d > 1000 %}<span class="badge text-bg-danger">se pasa {{ d|money }}</span>{% elif d < -1000 %}<span class="badge text-bg-warning">falta {{ (d * -1)|money }}</span>{% else %}<span class="badge text-bg-success">= presupuesto</span>{% endif %}{% endif %}</td>
+      </tr>
+      <tr>
+        <td colspan="6" class="text-end">
+          <button class="btn btn-sm btn-outline-success" id="btn-traer" title="Lee el Sistema Maestro y marca todo lo presentado de este cliente (cruce por NIT)">
+            <i class="bi bi-cloud-download"></i> Traer del maestro</button>
+          <button class="btn btn-sm btn-primary" id="btn-confirmar" title="Fija la renta base y deja el presupuesto igual al total confirmado (con log)">
+            <i class="bi bi-check2-circle"></i> Guardar / Confirmar</button>
+        </td>
       </tr>
     </tfoot>
   </table>
@@ -190,4 +211,72 @@
   </div>
 </div>
 
+
+<div class="modal fade" id="modalNota" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <form class="modal-content" id="formNota" onsubmit="return false;">
+      <div class="modal-header">
+        <h5 class="modal-title">Nota del cambio (obligatoria)</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div id="nota-aviso" class="alert alert-warning py-2 small d-none"></div>
+        <input class="form-control" name="motivo" maxlength="300"
+               placeholder="Ej: le hicieron IVA y activos exteriores que no estaban en el paquete" required>
+        <div class="form-text">Queda en el historial del cliente con fecha y valores antes/despues.</div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="submit" class="btn btn-sm btn-primary">Confirmar con nota</button>
+      </div>
+    </form>
+  </div>
+</div>
+<div class="toast-container position-fixed bottom-0 end-0 p-3">
+  <div id="toastFicha" class="toast align-items-center border-0" role="alert" aria-live="assertive" aria-atomic="true">
+    <div class="d-flex">
+      <div class="toast-body" id="toastFichaBody"></div>
+      <button type="button" class="btn-close me-2 m-auto" data-bs-dismiss="toast"></button>
+    </div>
+  </div>
+</div>
+<script>
+(function () {
+  function toast(msg, ok) {
+    const el = document.getElementById("toastFicha");
+    document.getElementById("toastFichaBody").textContent = msg;
+    el.classList.toggle("bg-success", !!ok);
+    el.classList.toggle("bg-danger", !ok);
+    el.classList.add("text-white");
+    bootstrap.Toast.getOrCreateInstance(el, { delay: 7000 }).show();
+  }
+  const btnTraer = document.getElementById("btn-traer");
+  if (btnTraer) btnTraer.addEventListener("click", () => {
+    btnTraer.disabled = true;
+    fetch(location.pathname + "/asesorias-maestro", { method: "POST" })
+      .then(r => r.json()).then(j => { toast(j.mensaje || j.error || "Sin cambios", j.ok); if (j.ok) setTimeout(() => location.reload(), 1400); })
+      .catch(() => toast("No pude leer el maestro", false))
+      .finally(() => { btnTraer.disabled = false; });
+  });
+  const btnConf = document.getElementById("btn-confirmar");
+  if (btnConf) btnConf.addEventListener("click", () => pedirNota(null));
+  function pedirNota(aviso) {
+    const av = document.getElementById("nota-aviso");
+    if (aviso) { av.textContent = aviso; av.classList.remove("d-none"); } else { av.classList.add("d-none"); }
+    new bootstrap.Modal("#modalNota").show();
+  }
+  const formNota = document.getElementById("formNota");
+  formNota.addEventListener("submit", () => {
+    const motivo = formNota.motivo.value.trim();
+    if (!motivo) return;
+    const body = new FormData(); body.append("motivo", motivo);
+    fetch(location.pathname + "/asesorias-confirmar", { method: "POST", body })
+      .then(r => r.json()).then(j => {
+        if (j.ok) { toast(j.mensaje, true); setTimeout(() => location.reload(), 1800); }
+        else if (j.pide_nota) { bootstrap.Modal.getInstance(document.getElementById("modalNota")).hide(); pedirNota(j.error); }
+        else toast(j.error, false);
+      }).catch(() => toast("Error de red al confirmar", false));
+  });
+})();
+</script>
 {% endblock %}

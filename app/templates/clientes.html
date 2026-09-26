@@ -4,6 +4,10 @@
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h3 class="mb-0">Clientes</h3>
   <div class="d-flex gap-2">
+    <form method="post" action="{{ url_for('main.clientes_asesorias_maestro_todos') }}"
+          onsubmit="return confirm('Lee el Sistema Maestro y marca a TODOS los clientes activos sus asesorías presentadas del año (IVA, RF, renta, exógena...). No pisa valores editados. ¿Seguir?');">
+      <button class="btn btn-success" title="Rellena las asesorías de cada cliente con lo presentado en el maestro"><i class="bi bi-cloud-download"></i> Traer asesorías del maestro</button>
+    </form>
     <form method="post" action="{{ url_for('main.clientes_sync_maestro') }}"
           onsubmit="return confirm('Traer del Sistema Maestro las rentas AG-2025 ya presentadas (scanner) y marcarlas aquí? Cruce por NIT.');">
       <button class="btn btn-outline-success" title="Marca PRESENTADA a todos los clientes cuya renta ya salió en el scanner del maestro"><i class="bi bi-cloud-download"></i> Rentas del maestro</button>
@@ -50,6 +54,8 @@
           {% elif estados_cobro.get(cli.id) == 'enviada' %}<i class="bi bi-send-fill text-primary" title="Cuenta de cobro enviada (falta pago)"></i>{% endif %}
           {% if cli.es_pagador %}<span class="badge bg-info text-dark" title="Pagador del grupo">pagador</span>{% endif %}
           {% if not cli.activo %}<span class="badge bg-secondary">inactivo</span>{% endif %}
+          {% if maestro_check.get(cli.id) == 'sin NIT' %}<span class="badge bg-warning text-dark" title="Este cliente no tiene NIT guardado: el motor no puede buscarlo en el maestro">sin NIT - no en maestro</span>
+          {% elif maestro_check.get(cli.id) == 'no_encontrado' %}<span class="badge bg-danger" title="El maestro no muestra obligaciones presentadas para este NIT en el año activo">no encontrado en maestro</span>{% endif %}
         </td>
         <td>{{ cli.tipo }}</td>
         <td>{{ cli.nit }}{% if cli.dv %}-{{ cli.dv }}{% endif %}</td>
@@ -105,7 +111,7 @@
 {% block scripts %}
 <script>
 // normaliza: quita tildes y pasa a minúsculas
-const norm = s => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const norm = s => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 const filas = document.querySelectorAll("#tablaClientes tbody tr[data-buscar]");
 document.getElementById("buscador").addEventListener("input", e => {
   const q = norm(e.target.value.trim());

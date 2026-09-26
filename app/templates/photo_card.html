@@ -72,22 +72,23 @@
   <h2>Servicios incluidos {{ a.anio_cobro if a }}</h2>
   {% if filas %}
   <table>
-    <thead><tr><th>#</th><th>Servicio</th><th class="num">Valor</th><th class="num">Subtotal</th></tr></thead>
+    <thead><tr><th>#</th><th>Servicio</th><th class="num">Tarifa</th><th class="num">Cant.</th><th class="num">Subtotal</th></tr></thead>
     <tbody>
     {% for f in filas %}
       <tr>
         <td>{{ loop.index }}</td>
         <td>{{ f.it.nombre }}{% if f.it.base_min %} <span style="color:#9ca3af; font-size:12px;">({{ f.it.base_min }})</span>{% endif %}</td>
-        <td class="num">{% if f.pct is not none %}{{ "%g"|format(f.pct) }}%{% elif f.valor is not none %}{{ f.valor|money }}{% elif f.it.defecto_pct > 0 %}{{ "%g"|format(f.it.defecto_pct) }}%{% else %}{{ f.it.defecto_valor|money }}{% endif %}</td>
+        <td class="num">{% if f.fija %}{{ (f.valor if f.valor is not none else f.it.defecto_valor)|money }}{% else %}{{ "%g"|format(f.eff_pct) }}%{% if f.base %} <span style="color:#9ca3af; font-size:12px;">de {{ f.base|money }}</span>{% endif %}{% endif %}</td>
+        <td class="num">{% if f.fija %}{{ f.cantidad or 1 }}{% else %}·{% endif %}</td>
         <td class="num">{{ f.subtotal|money }}</td>
       </tr>
     {% endfor %}
     </tbody>
     <tfoot>
-      <tr class="tot-final"><td colspan="3" style="text-align:right;">Total {{ a.anio_cobro if a }}</td><td class="num">{{ total|money }}</td></tr>
+      <tr class="tot-final"><td colspan="4" style="text-align:right;">Total {{ a.anio_cobro if a }}</td><td class="num">{{ total|money }}</td></tr>
       {% if presup %}
-      <tr><td colspan="3" style="text-align:right;">Presupuesto acordado</td><td class="num">{{ presup|money }}</td></tr>
-      <tr><td colspan="3" style="text-align:right;">Diferencia</td><td class="num">
+      <tr><td colspan="4" style="text-align:right;">Presupuesto acordado</td><td class="num">{{ presup|money }}</td></tr>
+      <tr><td colspan="4" style="text-align:right;">Diferencia</td><td class="num">
         {% set d = total - presup %}
         {% if d > 1000 %}<span class="badge b-rojo">se pasa {{ d|money }}</span>
         {% elif d < -1000 %}<span class="badge b-amarillo">falta {{ (d * -1)|money }}</span>
@@ -99,6 +100,12 @@
   {% else %}
   <div class="vacio">Sin servicios marcados para {{ a.anio_cobro if a }}.{% if excluidas %} ({{ excluidas }} sin marcar en la ficha).{% endif %}</div>
   {% endif %}
+
+{% if hay_maestro %}
+<div style="margin-top:8px; font-size:12.5px; color:#065f46; background:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px; padding:8px 10px;">
+  <b>Auditado con el Sistema Maestro:</b> los servicios con nube son obligaciones presentadas seg&uacute;n el maestro.
+</div>
+{% endif %}
 
   {% if trabajos %}
   <h2>Trabajos adicionales (fuera del presupuesto)</h2>

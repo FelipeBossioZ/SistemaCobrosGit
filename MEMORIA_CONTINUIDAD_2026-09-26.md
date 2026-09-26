@@ -35,9 +35,10 @@ Autodeteccion de ubicacion (CASA/OFICINA) intacta, archivo local por PC en `%LOC
 - **Remoto unico para ambos:** https://github.com/FelipeBossioZ/SistemaCobrosGit
 - **Ramas:** `produccion` = codigo de produccion 5001 (commit c7ace5b, incluye Etapa 0). `pruebas777` = desarrollo (commits 37060fb inicial + dcac199 Etapa 0). Existe ademas `master` en GitHub porque es la rama default del repo; hoy apunta igual a produccion (ignorable).
 - **Flujo acordado:** todo cambio NACE en pruebas777 -> cuando Felipe aprueba, se copia a produccion y se sube a la rama `produccion`.
-- **Comandos tipo** (desde cualquier PC):
-  - Guardar en pruebas: `git add -A` + `git commit -m "..."` + `git push` (la rama local master de esa carpeta empuja a origin/pruebas777)
-  - Guardar en produccion: `git add -A` + `git commit -m "..."` + `git push` (empuja a origin/master); para actualizar tambien la rama produccion: `git push origin master:produccion`
+- **Comandos tipo** (desde cualquier PC; las ramas locales YA coinciden con las remotas):
+  - En SistemaPruebas (rama local `pruebas777`): `git add -A` + `git commit -m "..."` + `git push`
+  - En Sistema de Cobros (rama local `produccion`): `git add -A` + `git commit -m "..."` + `git push`
+- Estado 26/09: `pruebas777` = f79bca9 (Etapa 0 + Motor parte 1). `produccion` = `master` = c7ace5b (Etapa 0).
 - `.gitignore` en ambos: excluye `instance/`, `__pycache__/`, `Respaldos BD/`, `Respaldo codigo */`, `salidas/`, `*.db`.
 - **Las BD NO viajan por git** (siguen viajando por OneDrive, cada instalacion con la suya).
 - **PC de oficina:** las carpetas llegan por OneDrive con su .git y remote ya configurados; no hay que clonar nada. Solo la PRIMERA vez que pida credenciales al hacer push, loguearse a GitHub (el Credential Manager de Windows las guarda).
@@ -60,6 +61,14 @@ Aprobaciones ya dadas (25/09 17:25 + 26/09):
 - Regla C de C: BORRADOR/sin cuenta => flexible. ENVIADA/PAGADA => no se toca el valor ni el PDF; queda registro en photo card y Excel de reportes ("se cobro X, debio ser Y porque se le presento Z").
 - Cliente no encontrado en maestro: marcarlo VISIBLE (color + nota "No encontrado en maestro") en la lista.
 - Limpieza pendiente: 11 filas sucias en `asesorias_cliente` del 777 (pct con pesos adentro).
+
+## 4b. MOTOR PARTE 1 - HECHO (26/09 ~09:30, en el 777, subido a GitHub)
+- `asesorias_catalogo` + columna `es_fija` (True = tarifa fija x cantidad, False = % de renta base). 22 items: 11 por % (RENTA, RST_SIMPLE, IP, EXOGENA, EXO_MPIO, F2516, ACT_EXT, CAMARA, ICA, RUB, SUPERSOC, DEV=12 en realidad) y fijas (IVA, CONSUMO, ANTICIPO_RST, RF, FE_INS, FE_FAC, CONT_PN, CONT_PJ_B, CONT_PJ_C, OTRAS).
+- `asesorias_cliente` + columna `cantidad` (default 1). `clientes` + columna `renta_base` (FLOAT, None = derivar del presupuesto).
+- Semilla sincroniza es_fija de items viejos y agrega los que falten (idempotente).
+- Limpieza: 11 filas sucias de `asesorias_cliente` eliminadas (la tabla quedo vacia y lista para el motor).
+- Smoke test: app arriba, /parametros /asesorias /clientes/1 -> 200.
+- Decisiones cerradas por Felipe: IVA/RF estandar propuesto y el baja a mano por cliente; RST_SIMPLE presentada cuenta como renta OK; tolerancia de redondeo fija +/- $1.000.
 
 ## 5. PREGUNTAS ABIERTAS (las respuestas llegan por chat)
 Q1 renta base: ¿guardar al confirmar (recomendado, auditable) o derivar en vivo?

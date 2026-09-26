@@ -111,6 +111,12 @@ Decisiones de Felipe (cerradas): 1) el presupuesto NUNCA se digita: se construye
 - Push a origin/produccion OK (c7ace5b -> c2e83bf). PC OFICINA: al sincronizar OneDrive llega el .git; solo git pull (o nada, el working tree ya esta actualizado) + iniciar.bat.
 - Pendiente verificacion de Felipe: abrir produccion con iniciar.bat, revisar ficha de un cliente real y el boton 'Construir desde la base'.
 
+## 4f. PYTHON UNICA CALCULADORA (26/09 ~12:55, commit 793b59c, solo en 777)
+- Respuestas de Felipe a la opinion honesta: (1) una sola persona, una PC a la vez OK; (2) SECRET_KEY lo ve despues; (3) duplicidad de formula -> SOLUCIONADA ahora; (4) quiere a futuro INTEGRAR el Sistema Maestro con este sistema en uno solo (el maestro fue pensado para todo: vencimientos, cobros, presupuestos) - proyecto grande aprobado en principio, planear despues; (5) Felipe no programa: las explicaciones tecnicas deben ser simples y las decisiones por preguntas concretas; (6) a futuro quiere delegar la operacion; (7) permiso dado para mover JS a Python.
+- HECHO: la ficha YA NO CALCULA nada en JavaScript. Endpoints autoritativos nuevos: GET /clientes/<id>/asesorias-estado (snapshot completo: base, presup, total, sobra [falta|pasa|ok, monto], maestro_ok, confirmado, filas con sub), POST /clientes/<id>/asesorias-recalcular (ajusta renta_base con 2 DECIMALES para que el total cuadre exacto con el presupuesto), POST /clientes/<id>/paquete-calc (calculadora PURA del modal: base+marcas -> subtotales/total, no escribe BD). POST /clientes/<id>/asesorias ahora devuelve el estado completo. El JS solo envia cambios y pinta lo que responde Python (funcion pintar() desde estado).
+- Hallazgo cosmético corregido: los subtotales traen centavos (Exo 378.408,75; ActExt 151.363,5; RUB 75.681,75) y suman 1.659.999 para Sergio vs 1.660.000 visual. Con base con centavos el total da exacto. La tolerancia ±$1.000 del confirmar cubre cualquier resto.
+- Pendiente: PASAR ESTO A PRODUCCION junto con la proxima tanda (no se ha pasado el 793b59c; produccion queda en c2e83bf que todavia calcula en JS).
+
 ## 5. PREGUNTAS ABIERTAS (las respuestas llegan por chat)
 Q1 renta base: ¿guardar al confirmar (recomendado, auditable) o derivar en vivo?
 Q2 sin match en maestro: se marca y se lista (propuesto y aceptado en linea general: color + nota visible).

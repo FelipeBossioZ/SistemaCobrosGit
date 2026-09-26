@@ -10,9 +10,6 @@ from datetime import date, datetime, timedelta
 
 import openpyxl
 
-EXCEL_DEFECTO = (r"C:\OneDriveOficina\OneDrive\OFICINA\FELIPE\Oficina Felipe"
-                 r"\6-Presupuestos\0-Presupuesto de cobros 2025 -FBZ.xlsx")
-
 
 def _money_in(texto):
     """Extrae montos '$1.234.567' o '380.000' de un texto."""

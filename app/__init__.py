@@ -36,5 +36,7 @@ def create_app():
         from .asesorias_seed import seed_asesorias
         seed_asesorias()
 
+    from .respaldos import respaldo_arranque
+    respaldo_arranque(app)
 
     return app

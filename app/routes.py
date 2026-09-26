@@ -15,6 +15,7 @@ from .models import (db, Parametro, AnioCobro, GrupoFamiliar, Cliente,
                      Ajuste, Pago, ESTADOS, TrabajoAdicional, saludo_de_cliente,
                      AsesoriaCatalogo, AsesoriaCliente, PresupuestoHistorial)
 from .pdf_generator import generar_pdf, ruta_pdf
+from . import rutas_comunes
 
 bp = Blueprint("main", __name__)
 
@@ -297,8 +298,8 @@ def clientes():
 @bp.route("/clientes/importar-cobros-2025", methods=["POST"])
 def clientes_importar_cobros_2025():
     """Lee el Excel del año anterior y guarda lo EFECTIVAMENTE cobrado por cliente."""
-    from .cobros_2025 import leer_cobros_2025, EXCEL_DEFECTO
-    path = Parametro.get("excel_cobros_anterior", "") or EXCEL_DEFECTO
+    from .cobros_2025 import leer_cobros_2025
+    path = Parametro.get("excel_cobros_anterior", "") or rutas_comunes.excel_anterior_defecto()
     if not os.path.isfile(path):
         flash(f"No encontré el Excel del año anterior: {path}", "error")
         return redirect(url_for("main.clientes"))
@@ -2002,6 +2003,8 @@ def parametros():
             Parametro.set("ruta_casa", f.get("ruta_casa", ""))
         if "ruta_oficina" in f:
             Parametro.set("ruta_oficina", f.get("ruta_oficina", ""))
+        if "excel_cobros_anterior" in f:
+            Parametro.set("excel_cobros_anterior", f.get("excel_cobros_anterior", ""))
         if "banco_info" in f:
             Parametro.set("banco_info", f.get("banco_info", "").replace("\r\n", "\n"))
         if a:
@@ -2073,11 +2076,14 @@ def _guardar_ubicacion(ub):
 def _ruta_maestro_activa():
     """Ruta del maestro según la ubicación activa (sin mezclar rutas del otro PC)."""
     ub, rc, ro = _ubicacion_datos()
-    if ub == "CASA":
+    if ub == "CASA" and rc:
         return _rebase(rc)
-    if ub == "OFICINA":
+    if ub == "OFICINA" and ro:
         return _rebase(ro)
-    return _rebase(Parametro.get("ruta_maestro", ""))
+    general = _rebase(Parametro.get("ruta_maestro", ""))
+    if general:
+        return general
+    return rutas_comunes.ruta_maestro_defecto()
 
 
 @bp.route("/parametros/ubicacion", methods=["POST"])

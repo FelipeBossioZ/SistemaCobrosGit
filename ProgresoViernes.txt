@@ -1,0 +1,42 @@
+Perfecto: miré tu captura y te confirmo que entendí exactamente lo que pasó: marcaste Renta (escribiendo 1.000.000 en el campo), IP, Exógena y Activos exterior — y el sistema dejó Exógena en “$75”, Activos en “$30”, IP en cero, para un total ridículo de $1.000.105 con “falta $849.895”. O sea: el sistema no entiende que el 1.000.000 es la base y que los % se calculan sobre ella. Tienes toda la razón: tal como está, carece de practicidad.
+
+Antes de responderte con la propuesta, déjame verificar dos cosas en el maestro (solo lectura) para no hacerte preguntas que me puedo responder solo:
+
+La captura lo confirma todo: marcaste 4 casillas y el sistema dejó Exógena en “$75” y Activos en “$30” — sumó porcentajes pelados con pesos ($1.000.105 total, absurdo). Antes de la propuesta, una última verificación del maestro: cómo se ven los periodos de IVA/Retefuente por cliente (de ahí sale la cantidad que pides):
+
+Leí tu captura (confirmé lo que vi: Exógena quedó en “$75”, Activos en “$30”, total $1.000.105 con “falta $849.895”) y verifiqué el maestro en modo lectura. Te confirmo lo que entendí, te propongo una sola solución, y al final van las preguntas — no escribo una línea de código hasta tu visto.
+
+✅ Lo que entendí (tu modelo de negocio)
+La Renta es la BASE. Tú escribes el valor de la renta (ej: $1.000.000) y toda asesoría que se calcule por % sobre la renta debe multiplicarse sola contra ese valor. Nunca más “75” pelado.
+Las de tarifa fija (IVA, RF) al marcarlas traen cantidad 1 × su base ($150.000 / $100.000). Si cambias cantidad a 2 o 6, se multiplica.
+Faltan en el catálogo: Impuesto al consumo y Anticipo RST, con la misma base de tarifas que Retefuente. (Y revisando mi semilla contra tu lista original descubrí que también me faltó ICA al 50% — lo corrijo de una.)
+El sistema debe hablar con el maestro: botón que, cuando la renta está OK, marque solo lo que a ese cliente ya le presentaron (por NIT). A Juan Carlos le hubiera marcado automáticamente Renta, Exógena, Patrimonio y Activos exterior — que es exactamente lo que marcaste a mano en la captura.
+Botón de análisis discriminado: trae lo presentado del maestro, y con el presupuesto ($1.850.000) deduce la base de renta: base = presupuesto ÷ (1 + suma de los % marcados). Con Renta+IP+Exógena+Activos: 1.850.000 ÷ 2,55 = $725.490 ≈ tu cálculo mental de $724.000 (redondeo a miles y listo). Así el total cuadra “más o menos” con el presupuesto, como dices.
+💡 Mi propuesta (una sola, la más eficiente)
+Motor de cálculo nuevo:
+
+El catálogo se divide en dos tipos: “% de renta” (Renta, IP, Exógena, Exógena Mpio, 2516, Activos, Cámara, ICA, Devoluciones, RUB, Supersoc) y “tarifa fija” (IVA, RF, Consumo, Anticipo RST, FE inscripción, FE factura, Contabilidad). El campo que ya tienes (% / valor) queda intacto; solo agrego “Cantidad” (default 1) a las de tarifa fija.
+Subtotal de %-items = % × valor de la Renta · Subtotal de fijos = tarifa × cantidad. Todo se recalcula en vivo mientras escribes o marcas.
+Botón “Traer del maestro” en la ficha: cruza por NIT, marca lo PRESENTADO/PAGADO, pone las cantidades reales (ej: IVA bimestral con 4 periodos presentados = cantidad 4; RF mensual con 8 = cantidad 8), deriva la base de renta desde el presupuesto, y muestra el desglose completo para que lo ajustes.
+❓ Preguntas antes de codear
+Consumo y Anticipo RST: ¿misma tarifa fija de Retefuente ($100.000 por presentación) y cantidad desde el maestro igual que IVA/RF?
+Formato 2516: si el maestro lo trae PRESENTADO, ¿lo marco directo al 20% (se presentó)? Los que conserves al 10% los ajustas tú a mano como dijiste desde el principio.
+¿“Cámara de comercio” = REGISTRO_MERCANTIL del maestro? (es lo único que se le parece; lo marcaría cuando salga PRESENTADO/PAGADO).
+Cliente con renta PENDIENTE: ¿el botón marca igual todo lo demás que esté presentado y te muestra un aviso amarillo “renta pendiente”, o prefieres que no toque nada hasta que la renta esté presentada?
+El botón al aplicarlo: ¿guarda de una y te muestra el resumen de lo que marcó (todo queda editable después), o prefieres ver la propuesta primero y guardar solo si la confirmas? Te recomiendo guardar directo con resumen — tu dolor es no digitar uno a uno, y todo campo sigue siendo editable.
+Respóndeme esas 5 (aunque sea “1 sí, 2 sí, 3 sí, 4 avisa, 5 directo”) y arranco con el motor completo.
+
+2 entregable(s) esta vez
+
+
+inspecciona_maestro.py
+
+
+
+ver_periodos.py
+
+
+
+17:25
+
+1. Si. 2.Ese es especial ese lo ajusto a mano. 3.Si 4. “renta pendiente” Esta bien. 5. Necesito dos botones, uno que se use una vez y que haga el recorrido por todos los clientes que aparecen en la lista de clientes y otro segundo boton que salga para cada cliente dentro del listado de donde se marca para que yo al darle actualice esa info preliminar y busque de nnuevo en el maestro y no me afecte los otros clientes y todo queda editable después. Dudas? Si me entiendes bien el 5 punto apruebo y le das al 777 sin pasar nada producción hasta confirmación final

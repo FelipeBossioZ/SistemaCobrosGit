@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# BD y datos generados (lo valioso se respalda aparte, NO va a git)
+instance/
+*.db
+salidas/
+Respaldos BD/
+Respaldo codigo */
+.openclaw-tmp/
+
+# Sistema operativo
+Thumbs.db
+desktop.ini
+~$*

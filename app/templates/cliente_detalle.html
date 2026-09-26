@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+{% block title %}{{ cli.nombre }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div>
+    <h3 class="mb-1">{{ cli.nombre }} <span class="badge bg-secondary">cód. {{ cli.codigo }}</span>
+      {% if not cli.activo %}<span class="badge bg-dark">inactivo</span>{% endif %}</h3>
+    <div class="text-muted small">
+      {{ cli.tipo }} · C.C./NIT {{ cli.nit }}{% if cli.dv %}-{{ cli.dv }}{% endif %} · {{ cli.ciudad }}
+      {% if cli.grupo %} · Grupo: <a href="{{ url_for('main.grupos') }}">{{ cli.grupo.nombre }}</a>
+        {% if cli.es_pagador %}<span class="badge bg-info text-dark">pagador</span>{% endif %}{% endif %}
+      {% if cli.nota %} · {{ cli.nota }}{% endif %}
+    </div>
+    <div class="small mt-1">
+      <span class="text-muted">Contacto:</span>
+      {% if cli.email %}<i class="bi bi-envelope"></i> {{ cli.email }}{% else %}<span class="text-warning"><i class="bi bi-envelope-slash"></i> sin correo</span>{% endif %}
+      {% if cli.telefonos %} · <i class="bi bi-telephone"></i> {{ cli.telefonos }}{% endif %}
+      {% if cli.direccion %} · <i class="bi bi-geo-alt"></i> {{ cli.direccion }}{% endif %}
+    </div>
+  </div>
+  <div>
+    <a class="btn btn-outline-secondary" href="{{ url_for('main.cliente_photo_card', cid=cli.id) }}" target="_blank"><i class="bi bi-printer"></i> Photo card</a>
+        <a class="btn btn-outline-primary" href="{{ url_for('main.cliente_editar', cid=cli.id) }}"><i class="bi bi-pencil"></i> Editar</a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('main.clientes') }}">Volver</a>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header bg-white fw-semibold">Presupuestos por año</div>
+  <div class="card-body p-0">
+    <table class="table table-sm mb-0">
+      <thead><tr><th>Año de cobro</th><th class="num">Valor presupuestado</th></tr></thead>
+      <tbody>
+      {% for p in presup %}
+        <tr><td>{{ p.anio_cobro }}</td><td class="num">{{ (p.valor)|money }}</td></tr>
+      {% endfor %}
+      {% if a %}
+      <tr>
+        <td>
+          <button type="button" class="btn btn-sm btn-outline-warning" data-bs-toggle="modal" data-bs-target="#modalPresup">Cambiar...</button>
+        </td>
+        <td class="num text-muted" id="presup-actual">{{ presup_act|money if presup_act else '·' }}</td>
+      </tr>
+      {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header bg-white fw-semibold d-flex justify-content-between align-items-center">
+    <span>Asesorías {{ a.anio_cobro if a }} <span class="text-muted fw-normal small">(paquete del cliente; % o valor distinto solo cuando el cliente es especial)</span></span>
+  </div>
+  <div class="table-responsive">
+  <table class="table table-sm mb-0">
+    <thead><tr><th style="width: 34px;"></th><th>Asesoría</th><th class="num">% / valor</th>
+      <th class="num" title="Lo que cobra la oficina por esta asesoría">Subtotal</th><th>Estándar</th></tr></thead>
+    <tbody>
+    {% for f in filas_asesorias %}
+      <tr data-ac="{{ f.it.id }}" class="{{ 'table-light text-muted' if not f.incluir }}">
+        <td class="text-center">
+          <input class="form-check-input ac-incluir" type="checkbox" {% if f.incluir %}checked{% endif %}
+                 title="Incluir en el paquete de {{ a.anio_cobro if a }}">
+        </td>
+        <td>{{ f.it.nombre }}{% if f.it.base_min %} <span class="text-muted small">({{ f.it.base_min }})</span>{% endif %}</td>
+        <td class="num" style="max-width: 190px;">
+          {% if f.it.defecto_pct > 0 %}
+            <input class="form-control form-control-sm text-end ac-pct" type="number" step="5" min="0" max="200"
+                   value="{{ '%g'|format(f.pct) if f.pct is not none }}" placeholder="{{ '%g'|format(f.it.defecto_pct) }}">
+          {% else %}
+            <input class="form-control form-control-sm text-end ac-val" type="number" step="1000" min="0"
+                   value="{{ '%d'|format(f.valor|round|int) if f.valor is not none }}" placeholder="{{ '%d'|format(f.it.defecto_valor|int) }}">
+          {% endif %}
+        </td>
+        <td class="num fw-semibold ac-sub">{{ f.subtotal|money if f.subtotal else '·' }}</td>
+        <td class="small text-muted">
+          {% if f.it.defecto_pct > 0 %}{{ '%g'|format(f.it.defecto_pct) }}%{% else %}{{ f.it.defecto_valor|money if f.it.defecto_valor else 'libre' }}{% endif %}
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="text-center text-muted py-3">Sin año activo.</td></tr>
+    {% endfor %}
+    </tbody>
+    <tfoot data-presup="{{ presup_act or 0 }}">
+      <tr class="table-light">
+        <td colspan="3" class="text-end fw-semibold">Total asesorías {{ a.anio_cobro if a }}</td>
+        <td class="num fw-bold" id="ases-total">{{ total_asesorias|money }}</td>
+        <td class="small text-muted" id="ases-dif">{% if presup_act %}{% set d = total_asesorias - presup_act %}{% if d > 1000 %}<span class="badge text-bg-danger">se pasa {{ d|money }}</span>{% elif d < -1000 %}<span class="badge text-bg-warning">falta {{ (d * -1)|money }}</span>{% else %}<span class="badge text-bg-success">= presupuesto</span>{% endif %}{% endif %}</td>
+      </tr>
+    </tfoot>
+  </table>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header bg-white fw-semibold">Trabajos adicionales <span class="text-muted fw-normal small">(fuera del presupuesto; para revisar antes de cobrar el próximo año)</span></div>
+  <div class="card-body p-0">
+    <table class="table table-sm mb-0">
+      <thead><tr><th>Fecha</th><th>Descripción</th><th class="num">Valor</th><th>Estado</th><th></th></tr></thead>
+      <tbody>
+      {% for t in cli.trabajos.order_by(TrabajoAdicional.fecha.desc(), TrabajoAdicional.id.desc()) %}
+        <tr>
+          <td>{{ t.fecha.strftime('%d/%m/%Y') if t.fecha }}</td>
+          <td>{{ t.descripcion }}</td>
+          <td class="num">{% if t.valor %}{{ t.valor|money }}{% else %}<span class="text-muted">por definir</span>{% endif %}</td>
+          <td><form method="post" class="d-inline" action="{{ url_for('main.trabajo_estado', tid=t.id) }}">
+            <button class="btn btn-sm {{ 'btn-success' if t.estado == 'COBRADO' else 'btn-outline-warning' }}"
+                    title="Clic para cambiar el estado">{{ t.estado }}</button></form></td>
+          <td class="text-end"><form method="post" class="d-inline" action="{{ url_for('main.trabajo_eliminar', tid=t.id) }}"
+                onsubmit="return confirm('¿Eliminar este trabajo adicional?');">
+            <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button></form></td>
+        </tr>
+      {% else %}
+        <tr><td colspan="5" class="text-muted small p-3">Sin trabajos adicionales registrados.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card-body border-top">
+    <form class="row g-2" method="post" action="{{ url_for('main.cliente_trabajo_nuevo', cid=cli.id) }}">
+      <div class="col-md-6"><input class="form-control form-control-sm" name="descripcion" required placeholder="Descripción (ej: requerimiento DIAN, consulta tributaria...)"></div>
+      <div class="col-md-2"><input class="form-control form-control-sm" name="valor" type="number" step="1000" placeholder="Valor"></div>
+      <div class="col-md-auto"><button class="btn btn-sm btn-outline-primary"><i class="bi bi-plus-lg"></i> Registrar</button></div>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header bg-white fw-semibold">Historial de cuentas de cobro</div>
+  <div class="table-responsive">
+  <table class="table table-sm table-hover mb-0">
+    <thead><tr><th>Año</th><th>Cuenta</th><th>Fecha</th><th class="num">Su valor</th>
+      <th class="num">Total cuenta</th><th class="num">Ajustes</th><th class="num">Pagos</th><th class="num">Saldo cuenta</th>
+      <th>Estado</th><th>Envíos</th><th>Pagos (detalle)</th></tr></thead>
+    <tbody>
+    {% for h in historial %}
+      <tr>
+        <td>{{ h.anio }}</td>
+        <td><a href="{{ url_for('main.cuenta_detalle', cid=h.cuenta_id) }}">{{ h.numero }}</a>
+          {% if h.estado_linea != 'ACTIVA' %}<span class="badge bg-secondary">línea anulada</span>{% endif %}</td>
+        <td>{{ h.fecha.strftime('%d/%m/%Y') if h.fecha }}</td>
+        <td class="num">{{ (h.valor)|money }}</td>
+        <td class="num">{{ (h.total)|money }}</td>
+        <td class="num">{% if h.ajustes %}-{% endif %}{{ (h.ajustes|abs)|money }}</td>
+        <td class="num text-success">{{ (h.pagos|sum(attribute='valor') if h.pagos else 0)|money }}</td>
+        <td class="num {% if h.saldo > 0 %}text-danger{% endif %}">{{ (h.saldo)|money }}</td>
+        <td><span class="badge badge-estado-{{ h.estado_cuenta }}">{{ h.estado_cuenta }}</span></td>
+        <td class="small">{% for e in h.envios %}{{ e.medio }} {{ e.fecha.strftime('%d/%m/%y') }}<br>{% endfor %}</td>
+        <td class="small">{% for p in h.pagos %}{{ (p.valor)|money }} · {{ p.forma }} · {{ p.fecha.strftime('%d/%m/%y') }}<br>{% endfor %}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="11" class="text-center text-muted py-4">Sin cuentas de cobro todavía.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+<div class="modal fade" id="modalPresup" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Cambiar presupuesto {{ a.anio_cobro if a }} — {{ cli.nombre }}</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="small text-muted">El motivo es obligatorio: queda documentado en el historial.
+        Si hay cuentas ENVIADAS o PAGADAS, no se toca su PDF pero se les deja nota interna del error de cálculo.</p>
+        <label class="form-label">Valor nuevo</label>
+        <input class="form-control mb-2" type="number" step="1000" min="0" id="presup-nuevo" value="{{ '%d'|format(presup_act) if presup_act else '' }}">
+        <label class="form-label">Motivo (obligatorio)</label>
+        <textarea class="form-control" id="presup-motivo" rows="2"
+                  placeholder="Ej: faltó incluir activos en el exterior / acuerdo con el cliente..."></textarea>
+        <div id="presup-res" class="small mt-2"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+        <button type="button" class="btn btn-primary" id="presup-guardar">Guardar cambio</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card mb-4" id="card-hist-presup" style="display:none;">
+  <div class="card-header bg-white fw-semibold">Historial de cambios del presupuesto <span class="text-muted fw-normal small">(auditoría)</span></div>
+  <div class="table-responsive">
+    <table class="table table-sm mb-0">
+      <thead><tr><th>Fecha</th><th>Año</th><th class="num">Anterior</th><th class="num">Nuevo</th><th>Motivo</th></tr></thead>
+      <tbody id="hist-presup-body"></tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}

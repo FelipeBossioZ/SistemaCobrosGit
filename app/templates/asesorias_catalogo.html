@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Asesorías{% endblock %}
+{% block content %}
+<h3 class="mb-1">Asesorías — estándares de la oficina</h3>
+<p class="text-muted small">Estos porcentajes y tarifas son el punto de partida para el paquete de cada cliente
+(se editan uno a uno en la ficha del cliente cuando el cliente es especial). Se guardan con Enter o al salir del campo.</p>
+
+<div class="card">
+  <div class="table-responsive">
+  <table class="table table-sm table-hover mb-0">
+    <thead><tr><th>Asesoría</th><th style="width: 110px;">Tipo</th><th class="num" style="width: 120px;">% estándar</th>
+      <th class="num" style="width: 150px;">Tarifa fija</th><th style="width: 220px;">Base / nota</th></tr></thead>
+    <tbody>
+    {% for it in items %}
+      <tr data-cat="{{ it.id }}">
+        <td><input class="form-control form-control-sm cat-nombre" value="{{ it.nombre }}"></td>
+        <td>
+          <select class="form-select form-select-sm cat-tipo">
+            {% for t in ['TODOS', 'PN', 'PJ'] %}
+            <option value="{{ t }}" {% if it.tipo == t %}selected{% endif %}>{{ t }}</option>
+            {% endfor %}
+          </select>
+        </td>
+        <td><input class="form-control form-control-sm text-end cat-pct" type="number" step="5" min="0" max="200" value="{{ '%g'|format(it.defecto_pct) }}"></td>
+        <td><input class="form-control form-control-sm text-end cat-valor" type="number" step="1000" min="0" value="{{ '%d'|format(it.defecto_valor|int) }}"></td>
+        <td><input class="form-control form-control-sm cat-base" value="{{ it.base_min }}" placeholder="ej: base $150.000, 1 SMLV/mes..."></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endblock %}

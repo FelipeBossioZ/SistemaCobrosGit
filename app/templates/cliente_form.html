@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Cliente{% endblock %}
+{% block content %}
+<h3>{{ "Editar" if cli else "Nuevo" }} cliente</h3>
+<form method="post" class="card p-4" style="max-width: 780px;">
+  <div class="row g-3">
+    <div class="col-md-3">
+      <label class="form-label">Código</label>
+      <input class="form-control" name="codigo" value="{{ cli.codigo if cli else (codigo_sugerido or '') }}"
+             {% if cli %}readonly{% else %}title="Código sugerido automáticamente (último + 1); puede cambiarlo"{% endif %}>
+      {% if not cli %}<div class="form-text">Sugerido automáticamente; puede editarlo.</div>{% endif %}
+    </div>
+    <div class="col-md-9">
+      <label class="form-label">Nombre completo / Razón social *</label>
+      <input class="form-control" name="nombre" required value="{{ cli.nombre if cli else '' }}">
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">Tipo</label>
+      <select class="form-select" name="tipo">
+        <option value="PN" {{ 'selected' if cli and cli.tipo == 'PN' }}>Persona natural</option>
+        <option value="PJ" {{ 'selected' if cli and cli.tipo == 'PJ' }}>Persona jurídica</option>
+      </select>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">Trato (para el PDF)</label>
+      <select class="form-select" name="trato">
+        <option value="" {{ 'selected' if cli and not cli.trato }}>Automático (por el nombre)</option>
+        <option value="SR" {{ 'selected' if cli and cli.trato == 'SR' }}>Señor</option>
+        <option value="SRA" {{ 'selected' if cli and cli.trato == 'SRA' }}>Señora</option>
+      </select>
+    </div>
+    <div class="col-md-6">
+      <label class="form-label">C.C. / NIT</label>
+      <input class="form-control" name="nit" value="{{ cli.nit if cli else '' }}">
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">DV</label>
+      <input class="form-control" name="dv" value="{{ cli.dv if cli else '' }}">
+    </div>
+    <div class="col-md-6">
+      <label class="form-label">Ciudad</label>
+      <input class="form-control" name="ciudad" value="{{ cli.ciudad if cli else 'MEDELLÍN' }}">
+    </div>
+    <div class="col-md-6">
+      <label class="form-label">Dirección</label>
+      <input class="form-control" name="direccion" value="{{ cli.direccion if cli else '' }}">
+    </div>
+    <div class="col-md-6">
+      <label class="form-label">Teléfonos</label>
+      <input class="form-control" name="telefonos" value="{{ cli.telefonos if cli else '' }}">
+    </div>
+    <div class="col-md-6">
+      <label class="form-label">Email</label>
+      <input class="form-control" type="email" name="email" value="{{ cli.email if cli else '' }}">
+    </div>
+    <div class="col-md-6">
+      <label class="form-label">Grupo familiar</label>
+      <select class="form-select" name="grupo_id">
+        <option value="">— Sin grupo —</option>
+        {% for g in grupos %}
+          <option value="{{ g.id }}" {{ 'selected' if cli and cli.grupo_id == g.id }}>{{ g.nombre }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-6 d-flex align-items-end">
+      <div class="form-check">
+        <input class="form-check-input" type="checkbox" name="es_pagador" id="pag" {{ 'checked' if cli and cli.es_pagador }}>
+        <label class="form-check-label" for="pag">Es el <strong>pagador</strong> del grupo (a su nombre sale la cuenta)</label>
+      </div>
+    </div>
+    {% if a %}
+    <div class="col-md-4">
+      <label class="form-label">Presupuesto {{ a.anio_cobro }}</label>
+      <input class="form-control" type="number" step="1000" name="valor"
+             value="{{ presup_actual.valor|int if presup_actual else 0 }}">
+    </div>
+    {% endif %}
+    <div class="col-md-8">
+      <label class="form-label">Nota</label>
+      <input class="form-control" name="nota" value="{{ cli.nota if cli else '' }}">
+    </div>
+    {% if cli %}
+    <div class="col-md-4 d-flex align-items-end">
+      <div class="form-check">
+        <input class="form-check-input" type="checkbox" name="activo" id="act" {{ 'checked' if cli.activo }}>
+        <label class="form-check-label" for="act">Activo</label>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+  <div class="mt-4">
+    <button class="btn btn-primary">Guardar</button>
+    <a class="btn btn-outline-secondary" href="{{ url_for('main.clientes') }}">Cancelar</a>
+  </div>
+</form>
+{% endblock %}

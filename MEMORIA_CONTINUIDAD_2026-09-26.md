@@ -85,6 +85,24 @@ Aprobaciones ya dadas (25/09 17:25 + 26/09):
 2. Prelleno del desglose estandar automatico (Fase C original: estados por asesoria desde maestro ya estan en la data; falta UI para estados individuales por obligacion).
 3. Regla "renta pendiente = aviso amarillo" en la ficha (la data del maestro ya distingue PRESENTADA de pendiente; falta pintar el aviso).
 
+## 4d. PAQUETE APROBADO 26/09 (~11:30, commit 7e2c2f1) - modal base + lapiz + revertir
+Decisiones de Felipe (cerradas): 1) el presupuesto NUNCA se digita: se construye desde la BASE (base x marcas = presupuesto); los trabajos adicionales viven FUERA del presupuesto; 2) Contabilidad PN es TARIFA MENSUAL ($600.000/mes, Cant = meses); 3) SI al aviso de sobra del paquete; 4) al aceptar el modal nuevo se aplica TODO de una (base amarrada + marcas + presupuesto) y queda listo para photo card.
+- **Modal "Construir desde la base"** (reemplaza el de valor digitado): campo base + lista completa con checkboxes + total en vivo; "Usar como presupuesto" aplica base, marcas y presupuesto en una transaccion; motivo obligatorio desde la 2a vez; regenera PDFs borrador / nota interna en ENVIADA-PAGADA. Ruta: POST /clientes/<id>/presupuesto-paquete (param opcional aplicar_marcas=0 para solo cambiar presupuesto). Sirve tambien para crear el PRIMER presupuesto de un cliente.
+- **Columna % / valor BLOQUEADA**: lapiz junto al titulo habilita; se convierte en check verde (guardar) y X roja (cancelar). Sin cambios cierran sin preguntar; con cambios confirman. Los cambios se guardan todos juntos (POST /clientes/<id>/asesorias por fila). base.html: auto-guardado de la ficha ahora SOLO incluir/cantidad (los pct/valor van por el flujo del lapiz).
+- **Bases parametrizadas en catalogo (seed una vez, no pisa ediciones):** IVA 150.000, CONSUMO 100.000, ANTICIPO_RST 100.000, RF 100.000, CONT_PN 600.000 "tarifa mensual". OTRAS queda la unica libre. Al marcar, el valor se llena con la base y Cant queda 1 o la del maestro.
+- **Revertir al maestro** (POST /clientes/<id>/asesorias-revertir): apaga lo manual, deja solo lo presentado en el maestro, valores vuelven a estandar, cantidades desde el maestro; BLOQUEADO si ya hubo confirmacion del ano (historial existe). Repetible hasta Guardar.
+- **Recalcular** (boton): re-deriva la base para que el paquete cuadre con el presupuesto (fijas primero, base absorbe el resto). Es obligatorio antes de Guardar: el front bloquea si hay cambios sin recalcular (pendiente) y el servidor devuelve requiere_recalculo si el paquete no cuadra (> $1.000).
+- **Confirmar ya NUNCA toca el presupuesto.** Solo amarra base + log. El presupuesto cambia SOLO por el modal base.
+- **Aviso de sobra en la ficha:** "Quedan $ X del presupuesto sin marcar" (amarillo) o "las marcas se pasan $ X" (rojo) junto a la base.
+- **Pruebas hechas en 777:** Sergio (cid 25, codigo 65): revertir bloqueado tras confirmacion OK; paquete desde base 600.000 con Renta+IP -> presupuesto 1.000.000 exacto; confirmar dejo presupuesto intacto. Datos de Sergio RESTAURADOS al estado de la imagen 1 (marcas Renta/Exo/ActExt/RUB/IVA3/FEs, base 504.545, presup 1.660.000, historial 'RUB y otras no aplicaban' como unica entrada). NOTA: Martha (cid 7) quedo con presup 1.920.000 y base 1.280.000 confirmados (correcto); las FE marcadas de la prueba del paquete con base 600k fueron desmarcadas al restaurar Sergio.
+- **Pendiente menor:** inputs ac-pct/ac-val llegan deshabilitados al HTML (pencil los habilita); el JS del ficha recalcula subtotales en vivo con la base del tfoot.
+
+### Falta (Fase C / pendientes del motor)
+1. Excel exportable con columna "debio cobrarse X (sistema) vs cobrado Y" para cuentas ENVIADA/PAGADA (auditoria de cobros).
+2. Prelleno del desglose estandar automatico (Fase C original: estados por asesoria desde maestro ya estan en la data; falta UI para estados individuales por obligacion).
+3. Regla "renta pendiente = aviso amarillo" en la ficha (la data del maestro ya distingue PRESENTADA de pendiente; falta pintar el aviso).
+4. Felipe debe PROBAR el paquete en el 777 y aprobar para pasar a produccion.
+
 ## 5. PREGUNTAS ABIERTAS (las respuestas llegan por chat)
 Q1 renta base: ¿guardar al confirmar (recomendado, auditable) o derivar en vivo?
 Q2 sin match en maestro: se marca y se lista (propuesto y aceptado en linea general: color + nota visible).

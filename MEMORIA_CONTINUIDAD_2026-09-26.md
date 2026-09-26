@@ -122,6 +122,14 @@ Decisiones de Felipe (cerradas): 1) el presupuesto NUNCA se digita: se construye
 - Produccion actualizada: c2e83bf -> 5b74ebf (solo routes.py + cliente_detalle.html; backups .antes-pythoncalc.bak en Respaldo codigo 2026-09-26; smoke test 200 en 6 rutas incluida /clientes/1/asesorias-estado con claves base/confirmado/filas/maestro_ok/ok/presup/sobra/total).
 - FASE C (en construccion en 777): tabla ENVIADA/PAGADA del anio, por cliente: presupuesto vs paquete cobrado (cuentas ENVIADA+PAGADA del anio activo), columnas estado, debio (paquete al confirmar), cobrado (valor linea cliente), diferencia. Criterios definidos: 'debio' = suma de subtotales de asesorias al momento del primer confirmar del anio (aprox: presupuesto actual cuando no hay historial de paquete); PENDIENTE de validar con Felipe el caso 'aqui fue donde se cobro de menos' (Sergio 1.660.000 presup vs 1.054.545 cobrado).
 
+## 4h. FASE C: AUDITORIA DEBIO-VS-COBRADO (26/09 ~14:40, en 777, pendiente aprobacion)
+- NUEVO: pagina /auditoria (link en navbar), boton Excel /auditoria.xlsx, y bloque 'previo de cierre' al final del listado de clientes (solo con cuenta emitida + contador de sin emitir).
+- Criterios: DEBIO = paquete del motor (suma subtotales de marcas actuales, misma matematica _asesorias_filas). COBRADO = lineas ACTIVAS de cuentas ENVIADA+PAGADA (BORRADOR no compromete; ANULADA no cuenta). Estados: OK (±$1.000) / COBRADO DE MENOS / COBRADO DE MÁS / FUERA DE PAQUETE (cobrado sin paquete) / SIN EMITIR (paquete sin cuenta; se lista aparte, no se compara).
+- RENDIMIENTO: leer_maestro ahora admite lectura POR LOTES: _asesorias_filas(cli, a, maestro_previo={nit: datos}) evita 1 lectura sqlite por cliente. /auditoria y /clientes pasaron de ~70s a ~1s.
+- Datos reales 777: 24 clientes con cuenta emitida (20 OK, 4 DE MENOS: Franco -10k, Muñoz -10k, Tobón A. -20k, Tobón M. -20k = descuentos/ajustes reales de cuentas 26-006/007/021), 93 SIN EMITIR. Totales comparables: debio 9.960.000 vs cobrado 9.900.000.
+- Hallazgo pendiente de decidir: el modal guarda el total con centavos en PresupuestoCliente y las lineas de cuenta redondean -> el 'debio' puede diferir $1-2 del 'cobrado' por redondeo. Con ±$1.000 no molesta, pero si Felipe quiere clavado, guardar el debio REDONDEADO al confirmar el paquete o al emitir la cuenta.
+- Backups: routes.py.faseC*.bak, clientes.html.faseC.bak, base.html.faseC.bak en Respaldo codigo 2026-09-26.
+
 ## 5. PREGUNTAS ABIERTAS (las respuestas llegan por chat)
 Q1 renta base: ¿guardar al confirmar (recomendado, auditable) o derivar en vivo?
 Q2 sin match en maestro: se marca y se lista (propuesto y aceptado en linea general: color + nota visible).

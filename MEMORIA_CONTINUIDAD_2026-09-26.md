@@ -142,6 +142,12 @@ Decisiones de Felipe (cerradas): 1) el presupuesto NUNCA se digita: se construye
 - Flujo final de acciones rapidas en clientes: RAYO crea cuenta+PDF+eml / SOBRE crea PDF+eml de cuenta existente / WHATSAPP crea imagen PNG. Todo por fetch con toast; NADA recarga la pagina.
 - PENDIENTE: pasar sobre+whatsapp+rayo-fetch a produccion cuando Felipe lo apruebe (produccion va en 29ca9bd).
 
+## 4k. FALSO DUPLICADO + DESCARGA DE IMAGEN RESTAURADA (27/09 ~16:00, ddaf121 en 777)
+- Felipe reporto: 'me creo una cuenta duplicada y no me descargo la imagen' (Marcela). Diagnostico con BD+carpetas: (1) NO hubo duplicado - a las 15:45 YO cree la 26-025 probando el rayo y la deje ANULADA; a las 15:51 Felipe dio rayo y el sistema correctamente creo la 26-026 (anulada no bloquea: esa es la regla anti-duplicacion; en BD Marcela tiene UNA cuenta viva). Leccion: despues de probar con datos reales, avisar explicitamente que quede 'como estaba' ANTES de que el usuario vea la pantalla - el residuo de prueba se confunde con un bug. (2) La imagen SI se creo (PNG 100KB en carpeta_imagenes de Parametros, ruta C:\OneDriveOficina\...\salidas\imagenes) pero YO habia quitado la descarga al navegador al pasarla a fetch - error de criterio: Felipe necesita la imagen a mano para adjuntarla en WhatsApp.
+- FIX (ddaf121): cliente_imagen ahora guarda en carpeta Y devuelve send_file(png, as_attachment) con headers X-Nombre/X-Mensaje cuando Accept: application/json; el JS hace r.blob() + createObjectURL + a.click() -> descarga a Descargas SIN recargar (mantiene scroll/filtro). Sin JS sigue flash+redirect. Probado: status 200, Content-Type image/png, magic bytes PNG, headers correctos.
+- Limpieza adicional: archivos de la prueba 26-025 (pdf+eml) movidos a Respaldo codigo 2026-09-26.
+- PENDIENTE produccion: Fase C (29ca9bd ya esta) + acciones rapidas fetch (sobre/whatsapp/rayo) + descarga de imagen (ddaf121) cuando Felipe apruebe.
+
 ## 5. PREGUNTAS ABIERTAS (las respuestas llegan por chat)
 Q1 renta base: ¿guardar al confirmar (recomendado, auditable) o derivar en vivo?
 Q2 sin match en maestro: se marca y se lista (propuesto y aceptado en linea general: color + nota visible).

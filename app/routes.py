@@ -223,6 +223,8 @@ def clientes():
     lista = query.order_by(Cliente.nombre).all()
     if ver == "cobrables":
         lista = [c for c in lista if c.puede_cobrarse]
+    # numero de orden en la vista (1..N, por nombre) para la columna #
+    nlista = {i + 1: c.id for i, c in enumerate(lista)}
     a = anio_actual()
     presup = {}
     if a:
@@ -307,7 +309,7 @@ def clientes():
     return render_template("clientes.html", clientes=lista, ver=ver,
                            presup=presup, a=a, correos=correos,
                            estados_cobro=estados_cobro, pagado_actual=pagado_actual,
-                           maestro_check=maestro_check, previo_audit=previo_audit,
+                           maestro_check=maestro_check, nlista=nlista, previo_audit=previo_audit,
                            previo_sin_emitir=previo_sin_emitir,
                            grupos=GrupoFamiliar.query.order_by(GrupoFamiliar.nombre))
 
@@ -592,6 +594,27 @@ def cliente_decl(cid):
         return jsonify(ok=True, decl=cli.decl_renta, cobrable=cli.puede_cobrarse,
                        estado=cli.estado_cobro_grupo)
     flash(f"{cli.nombre}: {Cliente.DECL_ETIQUETAS.get(cli.decl_renta, cli.decl_renta)}", "ok")
+    return redirect(request.referrer or url_for("main.clientes"))
+
+
+@bp.route("/clientes/<int:cid>/email-rapido", methods=["POST"])
+def cliente_email_rapido(cid):
+    """Guarda/corrige el email del cliente desde el listado (sin abrir la ficha).
+    Por fetch responde JSON: la pagina NO se recarga y se conserva el lugar."""
+    cli = db.get_or_404(Cliente, cid)
+    email = (request.form.get("email") or "").strip().lower()
+    if email and ("@" not in email or "." not in email.split("@")[-1]):
+        msg = f"Correo no válido: {email or '(vacío)'}"
+        if request.accept_mimetypes.best == "application/json":
+            return jsonify(ok=False, error=msg)
+        flash(msg, "error")
+        return redirect(request.referrer or url_for("main.clientes"))
+    cli.email = email
+    db.session.commit()
+    if request.accept_mimetypes.best == "application/json":
+        return jsonify(ok=True, email=cli.email,
+                       mensaje=f"correo guardado: {cli.email or '(borrado)'}")
+    flash(f"{cli.nombre}: correo guardado ({cli.email or 'borrado'})", "ok")
     return redirect(request.referrer or url_for("main.clientes"))
 
 
@@ -2569,8 +2592,9 @@ def _paquete_objetivo(cli, a):
 
 
 def _cobrado_del_anio(a):
-    """{cliente_id: valor} cobrado realmente: lineas ACTIVAS de cuentas
-    ENVIADA o PAGADA. BORRADOR no compromete; ANULADA no cuenta."""
+    """{cliente_id: valor} COMPROMETIDO en cuentas: lineas ACTIVAS de cuentas
+    ENVIADA o PAGADA. BORRADOR no compromete; ANULADA no cuenta.
+    OJO: no es plata recibida; lo recibido vive en Pago/_pagado_del_anio."""
     emis = (CuentaCobro.query.filter(CuentaCobro.anio_cobro_id == a.id,
                                      CuentaCobro.estado.in_(["ENVIADA", "PAGADA"]))
             .join(CuentaLinea).filter(CuentaLinea.estado == "ACTIVA")
@@ -2583,12 +2607,43 @@ def _cobrado_del_anio(a):
     return cob
 
 
+def _pagado_del_anio(a):
+    """{cliente_id: valor} PAGADO real: suma de pagos registrados en cuentas
+    ENVIADA o PAGADA (los abonos de cuentas anuladas no cuentan).
+    En cuentas de varios miembros el pago se reparte proporcional al valor
+    de la linea de cada uno (misma proporcion que la cuenta)."""
+    cts = (CuentaCobro.query.filter(CuentaCobro.anio_cobro_id == a.id,
+                                    CuentaCobro.estado.in_(["ENVIADA", "PAGADA"])).all())
+    if not cts:
+        return {}
+    ids = [c.id for c in cts]
+    pagos_cta = {}
+    for cid_, v in (db.session.query(Pago.cuenta_id, Pago.valor)
+                    .filter(Pago.cuenta_id.in_(ids)).all()):
+        pagos_cta[cid_] = pagos_cta.get(cid_, 0.0) + float(v or 0)
+    lineas_cta = {}
+    for cid_, cli_, v in (db.session.query(CuentaLinea.cuenta_id, CuentaLinea.cliente_id, CuentaLinea.valor)
+                          .filter(CuentaLinea.cuenta_id.in_(ids),
+                                  CuentaLinea.estado == "ACTIVA").all()):
+        lineas_cta.setdefault(cid_, []).append((cli_, float(v or 0)))
+    pag = {}
+    for cid_, total_c in pagos_cta.items():
+        base = sum(v for _, v in lineas_cta.get(cid_, []))
+        if base <= 0:
+            continue
+        for cli_, lv in lineas_cta[cid_]:
+            pag[cli_] = pag.get(cli_, 0.0) + total_c * (lv / base)
+    return pag
+
+
 def _filas_auditoria(a):
-    """Filas de auditoria del anio: debio (paquete del motor) vs cobrado.
+    """Filas de auditoria del anio: debio (paquete del motor) vs comprometido
+    (cuentas ENVIADA/PAGADA) + pagado real (pagos registrados).
     SIN_EMITIR = paquete definido pero sin cuenta emitida todavia (no es error,
-    es pendiente). FUERA_DE_PAQUETE = cobrado sin paquete (ej. trabajos adicionales).
+    es pendiente). FUERA_DE_PAQUETE = comprometido sin paquete (ej. trabajos adicionales).
     El maestro se lee UNA vez para todos los NITs (rendimiento)."""
     cobrado = _cobrado_del_anio(a)
+    pagados = _pagado_del_anio(a)
     activos = {c.id: c for c in Cliente.query.filter_by(activo=True).all()}
     nits = {(c.nit or "").strip() for c in activos.values()} - {""}
     from .maestro import leer_maestro
@@ -2602,6 +2657,7 @@ def _filas_auditoria(a):
                                      maestro_previo=m_all.get((cli.nit or "").strip(), {}))
         debio = round(sum(f["subtotal"] for f in f_cli if f["incluir"]), 2)
         cob = round(cobrado.get(cid, 0.0), 2)
+        pag = round(pagados.get(cid, 0.0), 2)
         if debio <= 1000 and cob <= 1000:
             continue
         dif = round(cob - debio, 2)
@@ -2615,7 +2671,7 @@ def _filas_auditoria(a):
             estado = "COBRADO_DE_MAS"
         else:
             estado = "OK"
-        filas.append({"cli": cli, "debio": debio, "cobrado": cob,
+        filas.append({"cli": cli, "debio": debio, "cobrado": cob, "pagado": pag,
                       "dif": dif, "estado": estado})
     filas.sort(key=lambda f: f["cli"].nombre.lower())
     return filas
@@ -2623,7 +2679,8 @@ def _filas_auditoria(a):
 
 @bp.route("/auditoria", methods=["GET"])
 def auditoria():
-    """Fase C: debio cobrarse (paquete del motor) vs cobrado (ENVIADA+PAGADA)."""
+    """Fase C: debio cobrarse (paquete del motor) vs comprometido (ENVIADA+PAGADA)
+    y pagado real (pagos registrados)."""
     a = anio_actual()
     if not a:
         flash("Activa un año de cobro primero.", "error")
@@ -2632,10 +2689,12 @@ def auditoria():
     comparables = [f for f in filas if f["estado"] != "SIN_EMITIR"]
     total_debio = round(sum(f["debio"] for f in comparables), 2)
     total_cob = round(sum(f["cobrado"] for f in comparables), 2)
+    total_pag = round(sum(f["pagado"] for f in comparables), 2)
     sin_emitir = [f for f in filas if f["estado"] == "SIN_EMITIR"]
     return render_template("auditoria.html", a=a, filas=comparables,
                            sin_emitir=sin_emitir,
-                           total_debio=total_debio, total_cobrado=total_cob)
+                           total_debio=total_debio, total_cobrado=total_cob,
+                           total_pagado=total_pag)
 
 
 @bp.route("/auditoria.xlsx", methods=["GET"])
@@ -2654,33 +2713,39 @@ def auditoria_xlsx():
     fill = PatternFill("solid", fgColor="FF6D28D9")
     ws = wb.active
     ws.title = "Auditoria"
-    ws.append(["Código", "Cliente", "Debió cobrarse", "Cobrado (ENVIADA+PAGADA)",
-               "Diferencia", "Estado"])
-    for col, wdt in enumerate([8, 38, 16, 24, 13, 20], 1):
+    ws.append(["Código", "Cliente", "Debió cobrarse", "Comprometido (ENVIADA+PAGADA)",
+               "Pagado (pagos reales)", "Diferencia", "Estado"])
+    for col, wdt in enumerate([8, 38, 16, 24, 18, 13, 20], 1):
         ws.column_dimensions[get_column_letter(col)].width = wdt
         ws.cell(row=1, column=col).font = h1
         ws.cell(row=1, column=col).fill = fill
     rojo = Font(color="FF9C0006")
     verde = Font(color="FF006100")
     gris = Font(color="FF808080")
+    naranja = Font(color="FFB45F06")
     ETIQ = {"OK": "OK", "COBRADO_DE_MENOS": "COBRADO DE MENOS",
             "COBRADO_DE_MAS": "COBRADO DE MÁS", "FUERA_DE_PAQUETE": "FUERA DE PAQUETE",
-            "SIN_EMITIR": "SIN EMITIR"}
+            "SIN_EMITIR": "SIN EMITIR", "PENDIENTE_PAGO": "PENDIENTE DE PAGO"}
     for f in filas:
         ws.append([f["cli"].codigo, f["cli"].nombre, f["debio"], f["cobrado"],
-                   f["dif"], ETIQ.get(f["estado"], f["estado"])])
+                   f["pagado"], f["dif"], ETIQ.get(f["estado"], f["estado"])])
         r_ = ws.max_row
         if f["estado"] == "COBRADO_DE_MENOS":
-            ws.cell(row=r_, column=5).font = rojo
+            ws.cell(row=r_, column=6).font = rojo
         elif f["estado"] == "COBRADO_DE_MAS":
-            ws.cell(row=r_, column=5).font = verde
+            ws.cell(row=r_, column=6).font = verde
         elif f["estado"] == "SIN_EMITIR":
-            ws.cell(row=r_, column=5).font = gris
             ws.cell(row=r_, column=6).font = gris
+            ws.cell(row=r_, column=7).font = gris
+        if f["pagado"] + 1 < f["cobrado"]:
+            ws.cell(row=r_, column=5).font = naranja
+            ws.cell(row=r_, column=7).font = naranja
     tot_d = sum(f["debio"] for f in filas if f["estado"] != "SIN_EMITIR")
     tot_c = sum(f["cobrado"] for f in filas)
-    ws.append(["", "TOTALES (cuentas emitidas)", tot_d, tot_c, round(tot_c - tot_d, 2), ""])
-    for col_ in (3, 4, 5):
+    tot_p = sum(f["pagado"] for f in filas)
+    ws.append(["", "TOTALES (cuentas emitidas)", tot_d, tot_c, round(tot_p, 2),
+               round(tot_c - tot_d, 2), ""])
+    for col_ in (3, 4, 5, 6, 7):
         ws.cell(row=ws.max_row, column=col_).font = Font(bold=True)
     ws.freeze_panes = "A2"
     buf = io.BytesIO()

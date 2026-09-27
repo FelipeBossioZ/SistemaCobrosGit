@@ -1,6 +1,15 @@
 {% extends "base.html" %}
 {% block title %}Clientes{% endblock %}
 {% block content %}
+<style>
+  #tablaClientes .form-email { display: none !important; }
+  #tablaClientes.edita-email .form-email,
+  #tablaClientes td.editando .form-email { display: flex !important; }
+  #tablaClientes.edita-email .email-view,
+  #tablaClientes td.editando .email-view { display: none; }
+  .email-edit { cursor: pointer; }
+  .email-edit:hover { text-decoration: underline !important; }
+</style>
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h3 class="mb-0">Clientes</h3>
   <div class="d-flex gap-2">
@@ -33,12 +42,19 @@
     <input class="form-control" id="buscador" type="search" autocomplete="off"
            placeholder="Escribe y filtra al instante: sin tildes, por nombre, código o NIT...">
   </div>
+  <div class="col-md-auto d-flex align-items-center">
+    <div class="form-check form-switch mb-0">
+      <input class="form-check-input" type="checkbox" role="switch" id="toggleEmail">
+      <label class="form-check-label" for="toggleEmail" title="Muestra los campos para escribir o corregir el correo de cada cliente, sin salir del listado">
+        <i class="bi bi-pencil-square"></i> Editar correos</label>
+    </div>
+  </div>
 </div>
 
 <div class="card">
   <div class="table-responsive">
   <table class="table table-sm table-hover mb-0" id="tablaClientes">
-    <thead><tr><th>Cód.</th><th>Nombre</th><th>Tipo</th><th>C.C./NIT</th><th>Contacto</th>
+    <thead><tr><th class="text-muted" title="Orden en la lista (por nombre)">#</th><th>Cód.</th><th>Nombre</th><th>Tipo</th><th>C.C./NIT</th><th>Contacto</th>
       <th>Grupo</th><th>Declaración</th><th class="num">Presupuesto {{ a.anio_cobro if a }}</th>
       <th class="num" title="Efectivamente pagado {{ a.anio_cobro if a }} según pagos registrados">Pagado {{ a.anio_cobro if a }}</th>
       <th class="num">Cobrado {{ (a.anio_cobro|int - 1) if a }}</th>
@@ -46,7 +62,7 @@
     <tbody>
     {% for cli in clientes %}
       <tr data-buscar="{{ cli.codigo }} {{ cli.nombre|lower }} {{ cli.nit }} {{ cli.grupo.nombre|lower if cli.grupo }}">
-        <td>{{ cli.codigo }}</td>
+        <td class="text-muted small">{{ nlista.get(cli.id) }}</td><td>{{ cli.codigo }}</td>
         <td>
           <a href="{{ url_for('main.cliente_detalle', cid=cli.id) }}"
              class="{% if estados_cobro.get(cli.id) == 'pagada' %}cobro-pagada{% elif estados_cobro.get(cli.id) == 'enviada' %}cobro-enviada{% endif %}">{{ cli.nombre }}</a>
@@ -60,8 +76,19 @@
         <td>{{ cli.tipo }}</td>
         <td>{{ cli.nit }}{% if cli.dv %}-{{ cli.dv }}{% endif %}</td>
         <td class="small">
-          {% if cli.email %}<i class="bi bi-envelope" title="{{ cli.email }}"></i>{% endif %}
-          {% if cli.telefonos %}<i class="bi bi-telephone" title="{{ cli.telefonos }}"></i>{% endif %}
+          <span class="email-view">
+            <a role="button" class="email-edit text-decoration-none {% if not cli.email %}text-warning{% endif %}"
+               title="Clic para escribir o corregir el correo aquí mismo (no se mueve la pantalla)"><i class="bi bi-envelope"></i>{% if not cli.email %} sin correo{% endif %}</a>
+            {% if cli.email %} <span class="email-text" title="{{ cli.email }}">{{ cli.email }}</span>{% endif %}
+          </span>
+          <form class="form-email" style="align-items:center; gap:4px; min-width:175px" method="post"
+                action="{{ url_for('main.cliente_email_rapido', cid=cli.id) }}" data-nombre="{{ cli.nombre }}">
+            <input class="form-control form-control-sm" type="email" name="email" value="{{ cli.email or '' }}"
+                   placeholder="sin correo: escribir aquí"
+                   title="Escribe o corrige el correo y guarda (Enter o botón). La pantalla no se mueve.">
+            <button class="btn btn-sm btn-outline-success" title="Guardar correo de {{ cli.nombre }} y seguir donde estás"><i class="bi bi-check-lg"></i></button>
+          </form>
+          {% if cli.telefonos %}<i class="bi bi-telephone text-muted" title="{{ cli.telefonos }}"></i>{% endif %}
         </td>
         <td class="small">{{ cli.grupo.nombre if cli.grupo }}</td>
         <td>
@@ -99,7 +126,7 @@
         </td>
       </tr>
     {% else %}
-      <tr><td colspan="12" class="text-center text-muted py-4">No hay clientes en esta vista.</td></tr>
+      <tr><td colspan="13" class="text-center text-muted py-4">No hay clientes en esta vista.</td></tr>
     {% endfor %}
     </tbody>
   </table>
@@ -115,13 +142,14 @@
   <div class="table-responsive">
   <table class="table table-sm table-hover mb-0">
     <thead><tr><th>Cliente</th><th class="num">Debió cobrarse</th>
-      <th class="num">Cobrado (ENVIADA+PAGADA)</th><th class="num">Diferencia</th><th>Estado</th></tr></thead>
+      <th class="num">Comprometido (ENVIADA+PAGADA)</th><th class="num">Pagado</th><th class="num">Diferencia</th><th>Estado</th></tr></thead>
     <tbody>
     {% for f in previo_audit %}
       <tr class="{{ 'table-danger' if f.estado == 'COBRADO_DE_MENOS' else ('table-success' if f.estado == 'COBRADO_DE_MAS' else '') }}">
         <td><a href="{{ url_for('main.cliente_detalle', cid=f.cli.id) }}">{{ f.cli.nombre }}</a></td>
         <td class="num">{{ f.debio|money }}</td>
         <td class="num">{{ f.cobrado|money }}</td>
+        <td class="num {{ 'text-warning fw-semibold' if f.pagado + 1 < f.cobrado }}">{{ f.pagado|money }}</td>
         <td class="num {% if f.dif < -1000 %}text-danger{% elif f.dif > 1000 %}text-success{% endif %}">
           {% if f.dif < 0 %}-{% endif %}{{ (f.dif|abs)|money }}</td>
         <td><span class="badge {{ 'bg-danger' if f.estado == 'COBRADO_DE_MENOS' else ('bg-success' if f.estado == 'COBRADO_DE_MAS' else 'bg-secondary') }}">{{ {'OK':'OK','COBRADO_DE_MENOS':'COBRADO DE MENOS','COBRADO_DE_MAS':'COBRADO DE MÁS','FUERA_DE_PAQUETE':'FUERA DE PAQUETE'}[f.estado] }}</span></td>
@@ -148,6 +176,31 @@
 /* Acciones rapidas (correo / imagen WhatsApp): fetch en segundo plano.
    La pagina NO se recarga: se mantiene scroll y el filtro del buscador. */
 (function () {
+  const tgl = document.getElementById("toggleEmail");
+  const tabla = document.getElementById("tablaClientes");
+  if (tgl && tabla) tgl.addEventListener("change", () => {
+    tabla.classList.toggle("edita-email", tgl.checked);
+    if (tgl.checked) {
+      const primero = tabla.querySelector(".edita-email .form-email input");
+      if (primero) primero.focus();
+    }
+  });
+  /* clic en el sobre de una fila: abre SOLO esa fila para editar */
+  if (tabla) tabla.addEventListener("click", e => {
+    const btn = e.target.closest(".email-edit");
+    if (!btn) return;
+    const td = btn.closest("td");
+    td.classList.add("editando");
+    const inp = td.querySelector(".form-email input");
+    if (inp) { inp.focus(); inp.select(); }
+  });
+  /* Escape cierra la edicion de la fila sin guardar */
+  document.querySelectorAll("form.form-email input").forEach(inp => inp.addEventListener("keydown", e => {
+    if (e.key === "Escape") {
+      const td = inp.closest("td");
+      if (td) td.classList.remove("editando");
+    }
+  }));
   const btns = document.querySelectorAll(".btn-acc");
   const toastEl = document.getElementById("toastAcc");
   const toastBody = document.getElementById("toastAccBody");
@@ -213,6 +266,61 @@
       })
       .catch(() => toast((f.dataset.nombre || "") + ": error de red", false))
       .finally(() => { if (b) delete b.dataset.busy; if (icon) icon.className = oldCls; });
+  }));
+
+  /* Correo en la fila: guarda y sigue donde esta (sin recargar). */
+  document.querySelectorAll("form.form-email").forEach(f => f.addEventListener("submit", e => {
+    e.preventDefault();
+    const b = f.querySelector("button");
+    if (b && b.dataset.busy) return;
+    if (b) b.dataset.busy = "1";
+    fetch(f.action, { method: "POST", body: new FormData(f), headers: { "Accept": "application/json" } })
+      .then(r => r.json())
+      .then(j => {
+        const nom = f.dataset.nombre ? f.dataset.nombre + ": " : "";
+        toast(nom + (j.ok ? (j.mensaje || "correo guardado") : (j.error || "no se pudo")), !!j.ok);
+        if (j.ok) {
+          const td = f.closest("td");
+          const ic = b.querySelector("i");
+          if (ic) ic.className = "bi bi-check-circle-fill";
+          b.classList.remove("btn-outline-success");
+          b.classList.add("btn-success");
+          /* refresca la vista de solo lectura con el correo nuevo (sin recargar) */
+          const view = td.querySelector(".email-view");
+          if (view) {
+            view.textContent = "";
+            const a = document.createElement("a");
+            a.className = "email-edit text-decoration-none";
+            a.setAttribute("role", "button");
+            a.title = "Clic para editar el correo aquí mismo";
+            const i2 = document.createElement("i");
+            i2.className = "bi bi-envelope";
+            a.appendChild(i2);
+            view.appendChild(a);
+            if (j.email) {
+              view.appendChild(document.createTextNode(" "));
+              const t = document.createElement("span");
+              t.className = "email-text";
+              t.title = j.email;
+              t.textContent = j.email;
+              view.appendChild(t);
+            }
+            const ok = document.createElement("i");
+            ok.className = "bi bi-check-circle-fill text-success ms-1";
+            view.appendChild(ok);
+            setTimeout(() => ok.remove(), 6500);
+          }
+          /* cierra la edicion de la fila y deja el chulo visible un momento */
+          setTimeout(() => {
+            td.classList.remove("editando");
+            if (ic) ic.className = "bi bi-check-lg";
+            b.classList.add("btn-outline-success");
+            b.classList.remove("btn-success");
+          }, 2500);
+        }
+      })
+      .catch(() => toast((f.dataset.nombre || "") + ": error de red", false))
+      .finally(() => { if (b) delete b.dataset.busy; });
   }));
 })();
 </script>

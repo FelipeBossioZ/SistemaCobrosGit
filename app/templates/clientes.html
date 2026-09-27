@@ -3,8 +3,12 @@
 {% block content %}
 <style>
   #tablaClientes .form-email { display: none !important; }
-  #tablaClientes.edita-email .email-view { display: none; }
-  #tablaClientes.edita-email .form-email { display: flex !important; }
+  #tablaClientes.edita-email .form-email,
+  #tablaClientes td.editando .form-email { display: flex !important; }
+  #tablaClientes.edita-email .email-view,
+  #tablaClientes td.editando .email-view { display: none; }
+  .email-edit { cursor: pointer; }
+  .email-edit:hover { text-decoration: underline !important; }
 </style>
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h3 class="mb-0">Clientes</h3>
@@ -73,10 +77,11 @@
         <td>{{ cli.nit }}{% if cli.dv %}-{{ cli.dv }}{% endif %}</td>
         <td class="small">
           <span class="email-view">
-            {% if cli.email %}<i class="bi bi-envelope" title="{{ cli.email }}"></i> <span title="{{ cli.email }}">{{ cli.email }}</span>
-            {% else %}<span class="text-warning" title="Sin correo: activa 'Editar correos' arriba para ponerle uno">&#9993; sin correo</span>{% endif %}
+            <a role="button" class="email-edit text-decoration-none {% if not cli.email %}text-warning{% endif %}"
+               title="Clic para escribir o corregir el correo aquí mismo (no se mueve la pantalla)"><i class="bi bi-envelope"></i>{% if not cli.email %} sin correo{% endif %}</a>
+            {% if cli.email %} <span class="email-text" title="{{ cli.email }}">{{ cli.email }}</span>{% endif %}
           </span>
-          <form class="form-email" style="display:none; align-items:center; gap:4px; min-width:175px" method="post"
+          <form class="form-email" style="align-items:center; gap:4px; min-width:175px" method="post"
                 action="{{ url_for('main.cliente_email_rapido', cid=cli.id) }}" data-nombre="{{ cli.nombre }}">
             <input class="form-control form-control-sm" type="email" name="email" value="{{ cli.email or '' }}"
                    placeholder="sin correo: escribir aquí"
@@ -180,6 +185,22 @@
       if (primero) primero.focus();
     }
   });
+  /* clic en el sobre de una fila: abre SOLO esa fila para editar */
+  if (tabla) tabla.addEventListener("click", e => {
+    const btn = e.target.closest(".email-edit");
+    if (!btn) return;
+    const td = btn.closest("td");
+    td.classList.add("editando");
+    const inp = td.querySelector(".form-email input");
+    if (inp) { inp.focus(); inp.select(); }
+  });
+  /* Escape cierra la edicion de la fila sin guardar */
+  document.querySelectorAll("form.form-email input").forEach(inp => inp.addEventListener("keydown", e => {
+    if (e.key === "Escape") {
+      const td = inp.closest("td");
+      if (td) td.classList.remove("editando");
+    }
+  }));
   const btns = document.querySelectorAll(".btn-acc");
   const toastEl = document.getElementById("toastAcc");
   const toastBody = document.getElementById("toastAccBody");
@@ -259,8 +280,43 @@
         const nom = f.dataset.nombre ? f.dataset.nombre + ": " : "";
         toast(nom + (j.ok ? (j.mensaje || "correo guardado") : (j.error || "no se pudo")), !!j.ok);
         if (j.ok) {
-          const off = f.parentElement.querySelector(".email-off");
-          if (off) off.remove();
+          const td = f.closest("td");
+          const ic = b.querySelector("i");
+          if (ic) ic.className = "bi bi-check-circle-fill";
+          b.classList.remove("btn-outline-success");
+          b.classList.add("btn-success");
+          /* refresca la vista de solo lectura con el correo nuevo (sin recargar) */
+          const view = td.querySelector(".email-view");
+          if (view) {
+            view.textContent = "";
+            const a = document.createElement("a");
+            a.className = "email-edit text-decoration-none";
+            a.setAttribute("role", "button");
+            a.title = "Clic para editar el correo aquí mismo";
+            const i2 = document.createElement("i");
+            i2.className = "bi bi-envelope";
+            a.appendChild(i2);
+            view.appendChild(a);
+            if (j.email) {
+              view.appendChild(document.createTextNode(" "));
+              const t = document.createElement("span");
+              t.className = "email-text";
+              t.title = j.email;
+              t.textContent = j.email;
+              view.appendChild(t);
+            }
+            const ok = document.createElement("i");
+            ok.className = "bi bi-check-circle-fill text-success ms-1";
+            view.appendChild(ok);
+            setTimeout(() => ok.remove(), 6500);
+          }
+          /* cierra la edicion de la fila y deja el chulo visible un momento */
+          setTimeout(() => {
+            td.classList.remove("editando");
+            if (ic) ic.className = "bi bi-check-lg";
+            b.classList.add("btn-outline-success");
+            b.classList.remove("btn-success");
+          }, 2500);
         }
       })
       .catch(() => toast((f.dataset.nombre || "") + ": error de red", false))

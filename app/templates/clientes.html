@@ -107,6 +107,34 @@
   </table>
   </div>
 </div>
+
+<div class="card mb-4 border-warning">
+  <div class="card-header bg-warning bg-opacity-25 fw-semibold">
+    <i class="bi bi-clipboard-check"></i> Auditoría {{ a.anio_cobro if a }} — previo de cierre
+    {% if previo_sin_emitir %}<span class="text-muted small ms-2">además, {{ previo_sin_emitir }} clientes aún sin emitir cuenta</span>{% endif %}
+    <a class="btn btn-sm btn-outline-primary float-end" href="{{ url_for('main.auditoria') }}">Ver detalle completo</a>
+  </div>
+  <div class="table-responsive">
+  <table class="table table-sm table-hover mb-0">
+    <thead><tr><th>Cliente</th><th class="num">Debió cobrarse</th>
+      <th class="num">Cobrado (ENVIADA+PAGADA)</th><th class="num">Diferencia</th><th>Estado</th></tr></thead>
+    <tbody>
+    {% for f in previo_audit %}
+      <tr class="{{ 'table-danger' if f.estado == 'COBRADO_DE_MENOS' else ('table-success' if f.estado == 'COBRADO_DE_MAS' else '') }}">
+        <td><a href="{{ url_for('main.cliente_detalle', cid=f.cli.id) }}">{{ f.cli.nombre }}</a></td>
+        <td class="num">{{ f.debio|money }}</td>
+        <td class="num">{{ f.cobrado|money }}</td>
+        <td class="num {% if f.dif < -1000 %}text-danger{% elif f.dif > 1000 %}text-success{% endif %}">
+          {% if f.dif < 0 %}-{% endif %}{{ (f.dif|abs)|money }}</td>
+        <td><span class="badge {{ 'bg-danger' if f.estado == 'COBRADO_DE_MENOS' else ('bg-success' if f.estado == 'COBRADO_DE_MAS' else 'bg-secondary') }}">{{ {'OK':'OK','COBRADO_DE_MENOS':'COBRADO DE MENOS','COBRADO_DE_MAS':'COBRADO DE MÁS','FUERA_DE_PAQUETE':'FUERA DE PAQUETE'}[f.estado] }}</span></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="text-center text-muted py-3">Sin cuentas emitidas todavía este año.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
 {% endblock %}
 {% block scripts %}
 <script>

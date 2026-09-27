@@ -301,10 +301,14 @@ def clientes():
                 maestro_check[c.id] = "sin NIT"
             elif not (m_check or {}).get(n):
                 maestro_check[c.id] = "no_encontrado"
+    previo_todo = _filas_auditoria(a) if a else []
+    previo_audit = [f for f in previo_todo if f["estado"] != "SIN_EMITIR"]
+    previo_sin_emitir = len(previo_todo) - len(previo_audit)
     return render_template("clientes.html", clientes=lista, ver=ver,
                            presup=presup, a=a, correos=correos,
                            estados_cobro=estados_cobro, pagado_actual=pagado_actual,
-                           maestro_check=maestro_check,
+                           maestro_check=maestro_check, previo_audit=previo_audit,
+                           previo_sin_emitir=previo_sin_emitir,
                            grupos=GrupoFamiliar.query.order_by(GrupoFamiliar.nombre))
 
 
@@ -2245,7 +2249,7 @@ def clientes_importar():
 
 
 # ---------------- Parámetros / años ----------------
-def _asesorias_filas(cli, a):
+def _asesorias_filas(cli, a, maestro_previo=None):
     """Filas de asesorias del cliente con PLATA REAL para el ano activo.
     - Tarifas fijas: valor estandar (o editado) x cantidad.
     - Porcentajes: pct estandar (o editado) x base; base = renta_base guardada
@@ -2263,8 +2267,11 @@ def _asesorias_filas(cli, a):
     nit = (cli.nit or "").strip()
     datos = {}
     if nit:
-        m = leer_maestro(a.anio_cobro, a.anio_gravable, {nit})
-        bruto = (m or {}).get(nit, {})
+        if maestro_previo is not None:
+            bruto = maestro_previo
+        else:
+            m = leer_maestro(a.anio_cobro, a.anio_gravable, {nit})
+            bruto = (m or {}).get(nit, {})
         cod2id = {c.codigo: c.id for c in AsesoriaCatalogo.query.all()}
         datos = {cod2id[k]: v for k, v in bruto.items() if k in cod2id}
     p = PresupuestoCliente.query.filter_by(cliente_id=cli.id, anio_cobro=a.anio_cobro).first()
@@ -2500,6 +2507,137 @@ def cliente_paquete_calc(cid):
         salida.append({"id": it.id, "sub": round(sub, 2)})
         total += sub
     return jsonify(ok=True, filas=salida, total=round(float(total)))
+
+
+def _paquete_objetivo(cli, a):
+    """Paquete objetivo del cliente: lo que la oficina considero cobrar.
+    Es la MISMA matematica de _asesorias_filas aplicada a las marcas actuales
+    (marcas = paquete acordado; el cobro real es lo emitido en cuentas)."""
+    filas, _base = _asesorias_filas(cli, a)
+    return round(sum(f["subtotal"] for f in filas if f["incluir"]), 2)
+
+
+def _cobrado_del_anio(a):
+    """{cliente_id: valor} cobrado realmente: lineas ACTIVAS de cuentas
+    ENVIADA o PAGADA. BORRADOR no compromete; ANULADA no cuenta."""
+    emis = (CuentaCobro.query.filter(CuentaCobro.anio_cobro_id == a.id,
+                                     CuentaCobro.estado.in_(["ENVIADA", "PAGADA"]))
+            .join(CuentaLinea).filter(CuentaLinea.estado == "ACTIVA")
+            .options(db.contains_eager(CuentaCobro.lineas)).all())
+    cob = {}
+    for c in emis:
+        for l in c.lineas:
+            if l.estado == "ACTIVA":
+                cob[l.cliente_id] = cob.get(l.cliente_id, 0.0) + float(l.valor or 0)
+    return cob
+
+
+def _filas_auditoria(a):
+    """Filas de auditoria del anio: debio (paquete del motor) vs cobrado.
+    SIN_EMITIR = paquete definido pero sin cuenta emitida todavia (no es error,
+    es pendiente). FUERA_DE_PAQUETE = cobrado sin paquete (ej. trabajos adicionales).
+    El maestro se lee UNA vez para todos los NITs (rendimiento)."""
+    cobrado = _cobrado_del_anio(a)
+    activos = {c.id: c for c in Cliente.query.filter_by(activo=True).all()}
+    nits = {(c.nit or "").strip() for c in activos.values()} - {""}
+    from .maestro import leer_maestro
+    m_all = leer_maestro(a.anio_cobro, a.anio_gravable, nits) or {}
+    filas = []
+    for cid in set(cobrado) | set(activos):
+        cli = activos.get(cid)
+        if cli is None:
+            continue
+        f_cli, _b = _asesorias_filas(cli, a,
+                                     maestro_previo=m_all.get((cli.nit or "").strip(), {}))
+        debio = round(sum(f["subtotal"] for f in f_cli if f["incluir"]), 2)
+        cob = round(cobrado.get(cid, 0.0), 2)
+        if debio <= 1000 and cob <= 1000:
+            continue
+        dif = round(cob - debio, 2)
+        if cob <= 1000:
+            estado = "SIN_EMITIR"
+        elif debio <= 1000:
+            estado = "FUERA_DE_PAQUETE"
+        elif dif < -1000:
+            estado = "COBRADO_DE_MENOS"
+        elif dif > 1000:
+            estado = "COBRADO_DE_MAS"
+        else:
+            estado = "OK"
+        filas.append({"cli": cli, "debio": debio, "cobrado": cob,
+                      "dif": dif, "estado": estado})
+    filas.sort(key=lambda f: f["cli"].nombre.lower())
+    return filas
+
+
+@bp.route("/auditoria", methods=["GET"])
+def auditoria():
+    """Fase C: debio cobrarse (paquete del motor) vs cobrado (ENVIADA+PAGADA)."""
+    a = anio_actual()
+    if not a:
+        flash("Activa un año de cobro primero.", "error")
+        return redirect(url_for("main.dashboard"))
+    filas = _filas_auditoria(a)
+    comparables = [f for f in filas if f["estado"] != "SIN_EMITIR"]
+    total_debio = round(sum(f["debio"] for f in comparables), 2)
+    total_cob = round(sum(f["cobrado"] for f in comparables), 2)
+    sin_emitir = [f for f in filas if f["estado"] == "SIN_EMITIR"]
+    return render_template("auditoria.html", a=a, filas=comparables,
+                           sin_emitir=sin_emitir,
+                           total_debio=total_debio, total_cobrado=total_cob)
+
+
+@bp.route("/auditoria.xlsx", methods=["GET"])
+def auditoria_xlsx():
+    """Excel de auditoria del anio: 1 fila por cliente."""
+    a = anio_actual()
+    if not a:
+        flash("Activa un año de cobro primero.", "error")
+        return redirect(url_for("main.cuentas"))
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.utils import get_column_letter
+    filas = _filas_auditoria(a)
+    wb = Workbook()
+    h1 = Font(bold=True, color="FFFFFFFF")
+    fill = PatternFill("solid", fgColor="FF6D28D9")
+    ws = wb.active
+    ws.title = "Auditoria"
+    ws.append(["Código", "Cliente", "Debió cobrarse", "Cobrado (ENVIADA+PAGADA)",
+               "Diferencia", "Estado"])
+    for col, wdt in enumerate([8, 38, 16, 24, 13, 20], 1):
+        ws.column_dimensions[get_column_letter(col)].width = wdt
+        ws.cell(row=1, column=col).font = h1
+        ws.cell(row=1, column=col).fill = fill
+    rojo = Font(color="FF9C0006")
+    verde = Font(color="FF006100")
+    gris = Font(color="FF808080")
+    ETIQ = {"OK": "OK", "COBRADO_DE_MENOS": "COBRADO DE MENOS",
+            "COBRADO_DE_MAS": "COBRADO DE MÁS", "FUERA_DE_PAQUETE": "FUERA DE PAQUETE",
+            "SIN_EMITIR": "SIN EMITIR"}
+    for f in filas:
+        ws.append([f["cli"].codigo, f["cli"].nombre, f["debio"], f["cobrado"],
+                   f["dif"], ETIQ.get(f["estado"], f["estado"])])
+        r_ = ws.max_row
+        if f["estado"] == "COBRADO_DE_MENOS":
+            ws.cell(row=r_, column=5).font = rojo
+        elif f["estado"] == "COBRADO_DE_MAS":
+            ws.cell(row=r_, column=5).font = verde
+        elif f["estado"] == "SIN_EMITIR":
+            ws.cell(row=r_, column=5).font = gris
+            ws.cell(row=r_, column=6).font = gris
+    tot_d = sum(f["debio"] for f in filas if f["estado"] != "SIN_EMITIR")
+    tot_c = sum(f["cobrado"] for f in filas)
+    ws.append(["", "TOTALES (cuentas emitidas)", tot_d, tot_c, round(tot_c - tot_d, 2), ""])
+    for col_ in (3, 4, 5):
+        ws.cell(row=ws.max_row, column=col_).font = Font(bold=True)
+    ws.freeze_panes = "A2"
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    nombre = f"Auditoria_{a.prefijo}_{date.today().isoformat()}.xlsx"
+    return Response(buf, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f"attachment; filename={nombre}"})
 
 
 @bp.route("/parametros", methods=["GET", "POST"])

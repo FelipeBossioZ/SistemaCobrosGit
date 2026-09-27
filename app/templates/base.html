@@ -52,7 +52,9 @@
   .form-check-input:checked { background-color: var(--morado); border-color: var(--morado); }
   .card-header { border-bottom: 1px solid var(--morado-claro); }
   .picker-row.selected { background: var(--morado-claro) !important; }
-  .nav-pills .nav-link.active { background: var(--morado) !important; }
+  .spin { animation: giro 0.9s linear infinite; }
+@keyframes giro { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.nav-pills .nav-link.active { background: var(--morado) !important; }
   .btn-warning { --bs-btn-bg: #f59e0b; --bs-btn-border-color: #f59e0b; color: #fff; }
 </style>
 {% block extra_head %}{% endblock %}

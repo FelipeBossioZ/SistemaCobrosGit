@@ -84,19 +84,17 @@
         <td class="text-end">
           <div class="d-flex gap-1 justify-content-end">
             {% if ver != 'inactivos' %}
-            <form method="post" action="{{ url_for('main.cliente_cuenta_expresa', cid=cli.id) }}"
-                  onsubmit="return confirm('Expreso completo: crea la cuenta de {{ cli.nombre }} con lo presupuestado, genera el PDF y deja el borrador de Outlook (.eml) listo. ¿Seguir?');">
+            <form method="post" class="form-expreso" data-confirm="Expreso completo: crea la cuenta de {{ cli.nombre }} con lo presupuestado, genera el PDF y deja el borrador de Outlook (.eml) listo. ¿Seguir?" data-nombre="{{ cli.nombre }}" action="{{ url_for('main.cliente_cuenta_expresa', cid=cli.id) }}">
               <button class="btn btn-sm btn-outline-primary" title="Expreso completo: crea con lo presupuestado, PDF y borrador de Outlook listo para enviar{% if cli.es_pagador and cli.grupo %} (incluye a {{ cli.grupo.miembros.count() }} miembros del grupo {{ cli.grupo.nombre }}){% endif %}"><i class="bi bi-lightning-charge"></i></button>
             </form>
-            {% if correos.get(cli.id) %}
-            <a class="btn btn-sm btn-outline-success" href="{{ url_for('main.cliente_correo', cid=cli.id) }}"
-               title="Redacta el correo de la cuenta de {{ cli.nombre }} (igual que el botón Redactar correo de la cuenta) y descarga el .eml listo para abrir en Outlook{% if correos.get(cli.id) > 1 %} — tiene {{ correos.get(cli.id) }} borradores guardados; este genera uno nuevo{% endif %}"><i class="bi bi-envelope-open"></i></a>
-            {% else %}
-            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.cliente_correo', cid=cli.id) }}"
-               title="Redacta el correo de la cuenta de {{ cli.nombre }} (igual que el botón Redactar correo de la cuenta) y descarga el .eml listo para abrir en Outlook"><i class="bi bi-envelope"></i></a>
-            {% endif %}
-            {% endif %}
+            <button type="button" class="btn btn-sm btn-outline-success btn-acc"
+                    data-acc="correo" data-cid="{{ cli.id }}" data-nombre="{{ cli.nombre }}"
+                    title="Crea el PDF y el borrador de correo (.eml) de {{ cli.nombre }} de una vez, en sus carpetas. No cambia la pantalla."><i class="bi bi-envelope"></i></button>
+            <button type="button" class="btn btn-sm btn-outline-success btn-acc"
+                    data-acc="imagen" data-cid="{{ cli.id }}" data-nombre="{{ cli.nombre }}"
+                    title="Crea la imagen PNG de la cuenta de {{ cli.nombre }} para WhatsApp y la guarda en la carpeta de imágenes (Parámetros). No cambia la pantalla."><i class="bi bi-whatsapp"></i></button>
             <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.cliente_editar', cid=cli.id) }}"><i class="bi bi-pencil"></i></a>
+            {% endif %}
           </div>
         </td>
       </tr>
@@ -135,8 +133,89 @@
   </table>
   </div>
 </div>
+
+<div class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index: 2000;">
+  <div id="toastAcc" class="toast align-items-center border-0" role="alert" aria-live="assertive" aria-atomic="true">
+    <div class="d-flex">
+      <div class="toast-body" id="toastAccBody"></div>
+      <button type="button" class="btn-close me-2 m-auto" data-bs-dismiss="toast"></button>
+    </div>
+  </div>
+</div>
 {% endblock %}
 {% block scripts %}
+<script>
+/* Acciones rapidas (correo / imagen WhatsApp): fetch en segundo plano.
+   La pagina NO se recarga: se mantiene scroll y el filtro del buscador. */
+(function () {
+  const btns = document.querySelectorAll(".btn-acc");
+  const toastEl = document.getElementById("toastAcc");
+  const toastBody = document.getElementById("toastAccBody");
+  function toast(msg, ok) {
+    if (!toastEl) { alert(msg); return; }
+    toastBody.textContent = msg;
+    toastEl.classList.toggle("bg-success", !!ok);
+    toastEl.classList.toggle("bg-danger", !ok);
+    toastEl.classList.add("text-white");
+    bootstrap.Toast.getOrCreateInstance(toastEl, { delay: 9000 }).show();
+  }
+  btns.forEach(b => b.addEventListener("click", () => {
+    if (b.dataset.busy) return;
+    b.dataset.busy = "1";
+    const icon = b.querySelector("i");
+    const oldCls = icon ? icon.className : "";
+    if (icon) icon.className = "bi bi-arrow-repeat spin";
+    const url = b.dataset.acc === "correo"
+      ? "{{ url_for('main.cliente_correo', cid=0) }}".replace("/0/", "/" + b.dataset.cid + "/")
+      : "{{ url_for('main.cliente_imagen', cid=0) }}".replace("/0/", "/" + b.dataset.cid + "/");
+    fetch(url, { headers: { "Accept": "application/json" } })
+      .then(r => {
+        const ct = (r.headers.get("Content-Type") || "");
+        if (b.dataset.acc === "imagen" && r.ok && ct.indexOf("image/") === 0) {
+          return r.blob().then(blob => {
+            const aUrl = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = aUrl;
+            a.download = r.headers.get("X-Nombre") || "imagen_cuenta.png";
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(aUrl), 4000);
+            toast(b.dataset.nombre + ": " + (r.headers.get("X-Mensaje") || "imagen lista"), true);
+          });
+        }
+        return r.json().then(j => {
+          toast(b.dataset.nombre + ": " + (j.ok ? (j.mensaje || "listo") : (j.error || "no se pudo")), !!j.ok);
+        });
+      })
+      .catch(() => toast(b.dataset.nombre + ": error de red", false))
+      .finally(() => {
+        delete b.dataset.busy;
+        if (icon) icon.className = oldCls;
+      });
+  }));
+
+  /* Rayo (expreso): mismo flujo en segundo plano; mantiene scroll y filtro. */
+  document.querySelectorAll("form.form-expreso").forEach(f => f.addEventListener("submit", e => {
+    e.preventDefault();
+    if (f.dataset.confirm && !confirm(f.dataset.confirm)) return;
+    const b = f.querySelector("button");
+    if (b && b.dataset.busy) return;
+    if (b) b.dataset.busy = "1";
+    const icon = b ? b.querySelector("i") : null;
+    const oldCls = icon ? icon.className : "";
+    if (icon) icon.className = "bi bi-arrow-repeat spin";
+    fetch(f.action, { method: "POST", headers: { "Accept": "application/json" } })
+      .then(r => r.json())
+      .then(j => {
+        const nom = f.dataset.nombre ? f.dataset.nombre + ": " : "";
+        toast(nom + (j.ok ? (j.mensaje || "listo") : (j.error || "no se pudo")), !!j.ok);
+      })
+      .catch(() => toast((f.dataset.nombre || "") + ": error de red", false))
+      .finally(() => { if (b) delete b.dataset.busy; if (icon) icon.className = oldCls; });
+  }));
+})();
+</script>
 <script>
 // normaliza: quita tildes y pasa a minúsculas
 const norm = s => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();

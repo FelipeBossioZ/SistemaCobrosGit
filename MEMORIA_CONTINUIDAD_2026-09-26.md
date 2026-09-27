@@ -178,6 +178,11 @@ Decisiones de Felipe (cerradas): 1) el presupuesto NUNCA se digita: se construye
 - Verificado test_client: sobre clickable >100 filas, css td.editando, delegacion, chulo, Escape, /clientes 200.
 - PENDIENTE produccion: cc598ff (auditoria pagado) + 4cfa254 + 7a7a617 (toggle) + este, cuando Felipe apruebe.
 
+## 4q. PAQUETE DEL DIA A PRODUCCION (27/09 ~18:20) + INCIDENTE MENOR
+- Felipe aprobo todo. checkout origin/pruebas777 -- routes.py, auditoria.html, clientes.html (8003679) en produccion; backups .antes-audit-email.bak; py_compile OK; smoke: 4 rutas GET 200 + todas las features presentes (#, sobre clickable, toggle, tarjeta Pagado, Comprometido). Commit produccion con el paquete: auditoria Comprometido+Pagado, correo editable (sobre clickable + toggle), columna #. Produccion = pruebas777 en app/.
+- INCIDENTE (documentar para nunca repetir): en el smoke inclui un POST a /clientes/1/email-rapido 'para validar JSON' y ESO ESCRIBIO en la BD de produccion (cliente 1 Luz Elena quedo con x@y.co). Detectado inmediatamente, restaurado con UPDATE a '' (valor exacto confirmado contra respaldo BD 26/09 y BD del 777, ambas con email vacio). REGLA NUEVA: en produccion los smoke tests son SOLO GET; jamas POST a endpoints con escritura, ni 'de prueba', sin importar lo pequeno del campo.
+- Verificacion post-restauracion: clientes.id=1 email=''. No hubo mas escritos (las otras rutas del smoke eran GET).
+
 ## 5. PREGUNTAS ABIERTAS (las respuestas llegan por chat)
 Q1 renta base: ¿guardar al confirmar (recomendado, auditable) o derivar en vivo?
 Q2 sin match en maestro: se marca y se lista (propuesto y aceptado en linea general: color + nota visible).

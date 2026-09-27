@@ -169,6 +169,10 @@ Decisiones de Felipe (cerradas): 1) el presupuesto NUNCA se digita: se construye
 - colspan fila vacia 12->13. Prueba end-to-end con test_client: guardar/invalido/restaurar JSON OK; email de prueba restaurado y verificado en BD (ian18663@gmail.com). Sobre->False para ese cliente es correcto (no tiene cuenta el anio, no es por correo).
 - PENDIENTE produccion: cc598ff (auditoria pagado) + 4cfa254 (email+#) cuando Felipe apruebe.
 
+## 4o. TOGGLE EDITAR CORREOS (27/09 ~17:15, en 777)
+- Felipe: 'que solo habilite edicion cuando yo quiera'. La columna Contacto volvio a SOLO LECTURA (sobre + email visible / sobre amarillo 'sin correo'); arriba junto al buscador hay interruptor 'Editar correos' que activa la clase edita-email en la tabla y muestra los inputs (CSS display none->flex con !important sobre el style inline). Al activar, focus al primer input. El guardado fetch/JSON no cambio. Respaldo clientes.html.toggle.bak. Verificado con test_client: toggle/css/vistas/JS presentes, /clientes 200.
+- PENDIENTE produccion: cc598ff (auditoria pagado) + 4cfa254 + toggle (este commit) cuando Felipe apruebe.
+
 ## 5. PREGUNTAS ABIERTAS (las respuestas llegan por chat)
 Q1 renta base: ¿guardar al confirmar (recomendado, auditable) o derivar en vivo?
 Q2 sin match en maestro: se marca y se lista (propuesto y aceptado en linea general: color + nota visible).

@@ -508,13 +508,19 @@ def cliente_correo(cid):
                .order_by(CuentaCobro.id.desc()).first())
         cuenta = lin.cuenta if lin else None
     if not cuenta:
-        flash(f"{cli.nombre} no tiene cuenta de cobro por cobrar este año. "
-              f"Primero genera la cuenta (rayo ⚡ o desde su detalle).", "error")
+        msg = (f"{cli.nombre} no tiene cuenta de cobro por cobrar este año. "
+               f"Primero genera la cuenta (rayo ⚡ o desde su detalle).")
+        if request.accept_mimetypes.best == "application/json":
+            return jsonify(ok=False, error=msg)
+        flash(msg, "error")
         return redirect(destino)
     pagador = cuenta.pagador_principal
     if not pagador or not (pagador.email or "").strip():
-        flash(f"El pagador {pagador.nombre if pagador else '(sin pagador)'} no tiene correo "
-              f"guardado en su ficha. Regístralo y vuelve a intentar.", "error")
+        msg = (f"El pagador {pagador.nombre if pagador else '(sin pagador)'} no tiene correo "
+               f"guardado en su ficha. Regístralo y vuelve a intentar.")
+        if request.accept_mimetypes.best == "application/json":
+            return jsonify(ok=False, error=msg)
+        flash(msg, "error")
         return redirect(destino)
     carpeta = _carpeta_correos()
     ruta_eml = _generar_eml(cuenta, carpeta)
@@ -524,8 +530,45 @@ def cliente_correo(cid):
         db.session.add(Envio(cuenta_id=cuenta.id, medio="Correo", fecha=date.today(),
                              nota=f"Borrador .eml generado en {carpeta} (para {pagador.email})"))
     db.session.commit()
+    if request.accept_mimetypes.best == "application/json":
+        return jsonify(ok=True, nombre=os.path.basename(ruta_eml),
+                       mensaje=f"PDF y borrador de correo listos en {carpeta}")
     return send_file(ruta_eml, as_attachment=True,
                      download_name=os.path.basename(ruta_eml))
+
+
+@bp.route("/clientes/<int:cid>/imagen", methods=["GET", "POST"])
+def cliente_imagen(cid):
+    """Imagen PNG de la cuenta (para WhatsApp) desde el listado: la guarda en la
+    carpeta de imagenes parametrizada (Parametros) y queda lista para adjuntar.
+    Por fetch devuelve JSON y la pagina NO se recarga; sin JS, redirige con flash."""
+    from .imagen_cuenta import generar_imagen, _nombre_imagen
+    cli = db.get_or_404(Cliente, cid)
+    a = anio_actual()
+    cuenta = None
+    if a:
+        lin = (CuentaLinea.query
+               .filter(CuentaLinea.cliente_id == cli.id, CuentaLinea.estado == "ACTIVA")
+               .join(CuentaCobro)
+               .filter(CuentaCobro.anio_cobro_id == a.id, CuentaCobro.estado != "ANULADA")
+               .order_by(CuentaCobro.id.desc()).first())
+        cuenta = lin.cuenta if lin else None
+    destino = request.referrer or url_for("main.clientes")
+    if not cuenta:
+        msg = (f"{cli.nombre} no tiene cuenta de cobro este año. "
+               f"Primero genera la cuenta (rayo ⚡ o desde su detalle).")
+        if request.accept_mimetypes.best == "application/json":
+            return jsonify(ok=False, error=msg)
+        flash(msg, "error")
+        return redirect(destino)
+    carpeta = _carpeta_imagenes()
+    ruta = os.path.join(carpeta, _nombre_imagen(cuenta))
+    generar_imagen(cuenta, ruta)
+    if request.accept_mimetypes.best == "application/json":
+        return jsonify(ok=True, ruta=ruta, nombre=os.path.basename(ruta),
+                       mensaje=f"Imagen lista en {carpeta}")
+    flash(f"Imagen guardada en: {ruta}", "ok")
+    return redirect(destino)
 
 
 @bp.route("/clientes/<int:cid>/decl", methods=["POST"])

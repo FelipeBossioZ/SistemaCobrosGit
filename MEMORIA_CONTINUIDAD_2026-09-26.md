@@ -130,6 +130,12 @@ Decisiones de Felipe (cerradas): 1) el presupuesto NUNCA se digita: se construye
 - Hallazgo pendiente de decidir: el modal guarda el total con centavos en PresupuestoCliente y las lineas de cuenta redondean -> el 'debio' puede diferir $1-2 del 'cobrado' por redondeo. Con ±$1.000 no molesta, pero si Felipe quiere clavado, guardar el debio REDONDEADO al confirmar el paquete o al emitir la cuenta.
 - Backups: routes.py.faseC*.bak, clientes.html.faseC.bak, base.html.faseC.bak en Respaldo codigo 2026-09-26.
 
+## 4i. FASE C A PRODUCCION + ACCIONES RAPIDAS CLIENTES (27/09, df331f7 en 777)
+- Fase C paso a PRODUCCION (29ca9bd) con smoke test 200 en /auditoria y /auditoria.xlsx. Backups .antes-faseC.bak en Respaldo codigo produccion.
+- PEDIDO FELIPE: en clientes, las acciones rapidas lo devolvian al inicio (perdia el lugar en la letra R). Ahora: el sobre se reemplazo por DOS botones fetch: sobre=correo (crea PDF+.eml juntos SIEMPRE, _generar_eml regenera el PDF, nunca falla por PDF faltante) y whatsapp=imagen (nueva ruta GET/POST /clientes/<id>/imagen, guarda PNG en carpeta_imagenes parametrizada; usa imagen_cuenta.generar_imagen: fitz->pdf2image->Pillow). NINGUNA accion rapida eliminada (rayo, editar, decl, cobrado siguen). Ambas responden JSON (request.accept_mimetypes), toast esquina inferior derecha, la pagina NO se recarga -> scroll y filtro del buscador se mantienen. Sin JS funcionan como antes (redirect/flash/download).
+- OJO (lecciones): (1) anclas con caracteres unicode: el title del sobre tenia EMDASH U+2014 y el mensaje un rayo U+26A1 - usar repr() ANTES; (2) el title tenia un {% if %} interno y un corte por indices se lo comio -> rompio jinja (endif/endfor desbalanceados); reparar por delimitadores semanticos (nombre de funcion url_for siguiente), nunca cortar en el PRIMER endif tras un inicio; (3) al fallar un parche medio, el archivo puede quedar SIN guardar (los asserts protegen).
+- Pendiente de probar por Felipe en 777: botones sobre/whatsapp del listado (deben mantener scroll y filtro), y la carpeta de imagenes en Parametros (carpeta_imagenes; vacia = carpeta de PDFs).
+
 ## 5. PREGUNTAS ABIERTAS (las respuestas llegan por chat)
 Q1 renta base: ¿guardar al confirmar (recomendado, auditable) o derivar en vivo?
 Q2 sin match en maestro: se marca y se lista (propuesto y aceptado en linea general: color + nota visible).

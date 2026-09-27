@@ -148,6 +148,11 @@ Decisiones de Felipe (cerradas): 1) el presupuesto NUNCA se digita: se construye
 - Limpieza adicional: archivos de la prueba 26-025 (pdf+eml) movidos a Respaldo codigo 2026-09-26.
 - PENDIENTE produccion: Fase C (29ca9bd ya esta) + acciones rapidas fetch (sobre/whatsapp/rayo) + descarga de imagen (ddaf121) cuando Felipe apruebe.
 
+## 4l. ACCIONES RAPIDAS A PRODUCCION (27/09 16:20, e273066) + PREGUNTA AUDITORIA
+- Felipe aprobo: pasamos rayo/sobre/WhatsApp por fetch a produccion. checkout origin/pruebas777 -- routes.py, clientes.html, base.html (65f2e6d); backups .antes-acciones.bak; py_compile OK; smoke test SOLO LECTURA con test_client en memoria (6 rutas 200; /correo y /imagen con cliente 1 que NO tiene lineas -> devolvieron el error JSON sin mutar nada; cero escritos en BD de produccion). Commit e273066 en rama produccion. Produccion queda: Fase C (29ca9bd) + acciones rapidas (e273066) = sync total con pruebas777 65f2e6d en app/.
+- PREGUNTA DE FELIPE (respondida sin codigo): en Auditoria, los ENVIADOS marcan OK pero el dice 'COBRADO + PAGADO?'; muchos enviados no han pagado. EXPLICACION: COBRADO = deuda comprometida en cuentas ENVIADA+PAGADA (lineas ACTIVAS); PAGADO es otra cosa (dinero recibido, pagos), NO interviene en el OK. El OK solo dice: lo que cobraste (cuenta) = lo que debias cobrar (paquete del motor), +-1.000. Estado de pago se ve en Cuentas/Pagos. CANDIDATOS A ORGANIZAR (esperando decision de Felipe): (a) renombrar columna 'Cobrado' a 'Comprometido en cuenta' o 'Deuda en cuenta'; (b) agregar columna separada 'Pagado' (suma de pagos) y estado de pago por cliente; (c) en el Excel igual. NO IMPLEMENTAR hasta que Felipe diga.
+- Nota tecnica para el futuro: si el smoke de produccion prueba /correo o /imagen, usar un cliente SIN lineas (como cid 1) para no mutar; con cliente con cuenta ENVIADA, /correo vuelve a generar .eml (sin nota nueva si ya habia envios) y puede cambiar estado solo de BORRADOR.
+
 ## 5. PREGUNTAS ABIERTAS (las respuestas llegan por chat)
 Q1 renta base: ¿guardar al confirmar (recomendado, auditable) o derivar en vivo?
 Q2 sin match en maestro: se marca y se lista (propuesto y aceptado en linea general: color + nota visible).

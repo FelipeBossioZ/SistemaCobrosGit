@@ -136,6 +136,12 @@ Decisiones de Felipe (cerradas): 1) el presupuesto NUNCA se digita: se construye
 - OJO (lecciones): (1) anclas con caracteres unicode: el title del sobre tenia EMDASH U+2014 y el mensaje un rayo U+26A1 - usar repr() ANTES; (2) el title tenia un {% if %} interno y un corte por indices se lo comio -> rompio jinja (endif/endfor desbalanceados); reparar por delimitadores semanticos (nombre de funcion url_for siguiente), nunca cortar en el PRIMER endif tras un inicio; (3) al fallar un parche medio, el archivo puede quedar SIN guardar (los asserts protegen).
 - Pendiente de probar por Felipe en 777: botones sobre/whatsapp del listado (deben mantener scroll y filtro), y la carpeta de imagenes en Parametros (carpeta_imagenes; vacia = carpeta de PDFs).
 
+## 4j. RAYO POR FETCH (27/09 ~15:50, dfc32d5 en 777, pendiente produccion)
+- Felipe reporto el caso real: Marcela Diaz Velez sin cuenta -> el rayo recargaba y lo devolvia al inicio. AHORA el rayo tambien trabaja en segundo plano: cliente_cuenta_expresa reescrita con helper _res(msg, tipo) que responde JSON (ok/mensaje o ok=false/error) cuando Accept: application/json, y redirect+flash si no (grupos y ficha siguen funcionando como antes). El form del listado lleva clase form-expreso + data-confirm (el texto del confirm viejo se traslado a data-confirm) + data-nombre; el JS intercepta submit, pide confirm, hace fetch POST y muestra toast. Scroll y filtro se mantienen SIEMPRE.
+- Probado end-to-end: Marcela (cid 39, presupuesto 330.000) -> creo cuenta 26-025 con PDF+eml (ok JSON); segundo clic -> 'ya esta en la cuenta 26-025... usa el sobre'. Limpieza: cuenta 26-025 ANULADA con motivo, envios borrados, numero_siguiente=25 (sqlite directo; app.db no expone db en __init__).
+- Flujo final de acciones rapidas en clientes: RAYO crea cuenta+PDF+eml / SOBRE crea PDF+eml de cuenta existente / WHATSAPP crea imagen PNG. Todo por fetch con toast; NADA recarga la pagina.
+- PENDIENTE: pasar sobre+whatsapp+rayo-fetch a produccion cuando Felipe lo apruebe (produccion va en 29ca9bd).
+
 ## 5. PREGUNTAS ABIERTAS (las respuestas llegan por chat)
 Q1 renta base: ¿guardar al confirmar (recomendado, auditable) o derivar en vivo?
 Q2 sin match en maestro: se marca y se lista (propuesto y aceptado en linea general: color + nota visible).

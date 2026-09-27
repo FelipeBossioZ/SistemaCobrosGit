@@ -223,6 +223,8 @@ def clientes():
     lista = query.order_by(Cliente.nombre).all()
     if ver == "cobrables":
         lista = [c for c in lista if c.puede_cobrarse]
+    # numero de orden en la vista (1..N, por nombre) para la columna #
+    nlista = {i + 1: c.id for i, c in enumerate(lista)}
     a = anio_actual()
     presup = {}
     if a:
@@ -307,7 +309,7 @@ def clientes():
     return render_template("clientes.html", clientes=lista, ver=ver,
                            presup=presup, a=a, correos=correos,
                            estados_cobro=estados_cobro, pagado_actual=pagado_actual,
-                           maestro_check=maestro_check, previo_audit=previo_audit,
+                           maestro_check=maestro_check, nlista=nlista, previo_audit=previo_audit,
                            previo_sin_emitir=previo_sin_emitir,
                            grupos=GrupoFamiliar.query.order_by(GrupoFamiliar.nombre))
 
@@ -592,6 +594,27 @@ def cliente_decl(cid):
         return jsonify(ok=True, decl=cli.decl_renta, cobrable=cli.puede_cobrarse,
                        estado=cli.estado_cobro_grupo)
     flash(f"{cli.nombre}: {Cliente.DECL_ETIQUETAS.get(cli.decl_renta, cli.decl_renta)}", "ok")
+    return redirect(request.referrer or url_for("main.clientes"))
+
+
+@bp.route("/clientes/<int:cid>/email-rapido", methods=["POST"])
+def cliente_email_rapido(cid):
+    """Guarda/corrige el email del cliente desde el listado (sin abrir la ficha).
+    Por fetch responde JSON: la pagina NO se recarga y se conserva el lugar."""
+    cli = db.get_or_404(Cliente, cid)
+    email = (request.form.get("email") or "").strip().lower()
+    if email and ("@" not in email or "." not in email.split("@")[-1]):
+        msg = f"Correo no válido: {email or '(vacío)'}"
+        if request.accept_mimetypes.best == "application/json":
+            return jsonify(ok=False, error=msg)
+        flash(msg, "error")
+        return redirect(request.referrer or url_for("main.clientes"))
+    cli.email = email
+    db.session.commit()
+    if request.accept_mimetypes.best == "application/json":
+        return jsonify(ok=True, email=cli.email,
+                       mensaje=f"correo guardado: {cli.email or '(borrado)'}")
+    flash(f"{cli.nombre}: correo guardado ({cli.email or 'borrado'})", "ok")
     return redirect(request.referrer or url_for("main.clientes"))
 
 

@@ -38,7 +38,7 @@
 <div class="card">
   <div class="table-responsive">
   <table class="table table-sm table-hover mb-0" id="tablaClientes">
-    <thead><tr><th>Cód.</th><th>Nombre</th><th>Tipo</th><th>C.C./NIT</th><th>Contacto</th>
+    <thead><tr><th class="text-muted" title="Orden en la lista (por nombre)">#</th><th>Cód.</th><th>Nombre</th><th>Tipo</th><th>C.C./NIT</th><th>Contacto</th>
       <th>Grupo</th><th>Declaración</th><th class="num">Presupuesto {{ a.anio_cobro if a }}</th>
       <th class="num" title="Efectivamente pagado {{ a.anio_cobro if a }} según pagos registrados">Pagado {{ a.anio_cobro if a }}</th>
       <th class="num">Cobrado {{ (a.anio_cobro|int - 1) if a }}</th>
@@ -46,7 +46,7 @@
     <tbody>
     {% for cli in clientes %}
       <tr data-buscar="{{ cli.codigo }} {{ cli.nombre|lower }} {{ cli.nit }} {{ cli.grupo.nombre|lower if cli.grupo }}">
-        <td>{{ cli.codigo }}</td>
+        <td class="text-muted small">{{ nlista.get(cli.id) }}</td><td>{{ cli.codigo }}</td>
         <td>
           <a href="{{ url_for('main.cliente_detalle', cid=cli.id) }}"
              class="{% if estados_cobro.get(cli.id) == 'pagada' %}cobro-pagada{% elif estados_cobro.get(cli.id) == 'enviada' %}cobro-enviada{% endif %}">{{ cli.nombre }}</a>
@@ -60,8 +60,15 @@
         <td>{{ cli.tipo }}</td>
         <td>{{ cli.nit }}{% if cli.dv %}-{{ cli.dv }}{% endif %}</td>
         <td class="small">
-          {% if cli.email %}<i class="bi bi-envelope" title="{{ cli.email }}"></i>{% endif %}
-          {% if cli.telefonos %}<i class="bi bi-telephone" title="{{ cli.telefonos }}"></i>{% endif %}
+          <form class="form-email d-flex align-items-center gap-1" style="min-width: 175px" method="post"
+                action="{{ url_for('main.cliente_email_rapido', cid=cli.id) }}" data-nombre="{{ cli.nombre }}">
+            <input class="form-control form-control-sm" type="email" name="email" value="{{ cli.email or '' }}"
+                   placeholder="sin correo: escribir aquí"
+                   title="Escribe o corrige el correo y guarda (Enter o botón). La pantalla no se mueve.">
+            <button class="btn btn-sm btn-outline-success" title="Guardar correo de {{ cli.nombre }} y seguir donde estás"><i class="bi bi-check-lg"></i></button>
+          </form>
+          {% if cli.telefonos %}<i class="bi bi-telephone text-muted" title="{{ cli.telefonos }}"></i>{% endif %}
+          {% if not cli.email %}<span class="email-off text-warning" title="Sin correo: el sobre no puede crear el borrador hasta que guardes uno">&#9993;</span>{% endif %}
         </td>
         <td class="small">{{ cli.grupo.nombre if cli.grupo }}</td>
         <td>
@@ -99,7 +106,7 @@
         </td>
       </tr>
     {% else %}
-      <tr><td colspan="12" class="text-center text-muted py-4">No hay clientes en esta vista.</td></tr>
+      <tr><td colspan="13" class="text-center text-muted py-4">No hay clientes en esta vista.</td></tr>
     {% endfor %}
     </tbody>
   </table>
@@ -214,6 +221,26 @@
       })
       .catch(() => toast((f.dataset.nombre || "") + ": error de red", false))
       .finally(() => { if (b) delete b.dataset.busy; if (icon) icon.className = oldCls; });
+  }));
+
+  /* Correo en la fila: guarda y sigue donde esta (sin recargar). */
+  document.querySelectorAll("form.form-email").forEach(f => f.addEventListener("submit", e => {
+    e.preventDefault();
+    const b = f.querySelector("button");
+    if (b && b.dataset.busy) return;
+    if (b) b.dataset.busy = "1";
+    fetch(f.action, { method: "POST", body: new FormData(f), headers: { "Accept": "application/json" } })
+      .then(r => r.json())
+      .then(j => {
+        const nom = f.dataset.nombre ? f.dataset.nombre + ": " : "";
+        toast(nom + (j.ok ? (j.mensaje || "correo guardado") : (j.error || "no se pudo")), !!j.ok);
+        if (j.ok) {
+          const off = f.parentElement.querySelector(".email-off");
+          if (off) off.remove();
+        }
+      })
+      .catch(() => toast((f.dataset.nombre || "") + ": error de red", false))
+      .finally(() => { if (b) delete b.dataset.busy; });
   }));
 })();
 </script>

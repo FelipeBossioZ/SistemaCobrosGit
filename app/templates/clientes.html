@@ -84,8 +84,7 @@
         <td class="text-end">
           <div class="d-flex gap-1 justify-content-end">
             {% if ver != 'inactivos' %}
-            <form method="post" action="{{ url_for('main.cliente_cuenta_expresa', cid=cli.id) }}"
-                  onsubmit="return confirm('Expreso completo: crea la cuenta de {{ cli.nombre }} con lo presupuestado, genera el PDF y deja el borrador de Outlook (.eml) listo. ¿Seguir?');">
+            <form method="post" class="form-expreso" data-confirm="Expreso completo: crea la cuenta de {{ cli.nombre }} con lo presupuestado, genera el PDF y deja el borrador de Outlook (.eml) listo. ¿Seguir?" data-nombre="{{ cli.nombre }}" action="{{ url_for('main.cliente_cuenta_expresa', cid=cli.id) }}">
               <button class="btn btn-sm btn-outline-primary" title="Expreso completo: crea con lo presupuestado, PDF y borrador de Outlook listo para enviar{% if cli.es_pagador and cli.grupo %} (incluye a {{ cli.grupo.miembros.count() }} miembros del grupo {{ cli.grupo.nombre }}){% endif %}"><i class="bi bi-lightning-charge"></i></button>
             </form>
             <button type="button" class="btn btn-sm btn-outline-success btn-acc"
@@ -180,6 +179,26 @@
         delete b.dataset.busy;
         if (icon) icon.className = oldCls;
       });
+  }));
+
+  /* Rayo (expreso): mismo flujo en segundo plano; mantiene scroll y filtro. */
+  document.querySelectorAll("form.form-expreso").forEach(f => f.addEventListener("submit", e => {
+    e.preventDefault();
+    if (f.dataset.confirm && !confirm(f.dataset.confirm)) return;
+    const b = f.querySelector("button");
+    if (b && b.dataset.busy) return;
+    if (b) b.dataset.busy = "1";
+    const icon = b ? b.querySelector("i") : null;
+    const oldCls = icon ? icon.className : "";
+    if (icon) icon.className = "bi bi-arrow-repeat spin";
+    fetch(f.action, { method: "POST", headers: { "Accept": "application/json" } })
+      .then(r => r.json())
+      .then(j => {
+        const nom = f.dataset.nombre ? f.dataset.nombre + ": " : "";
+        toast(nom + (j.ok ? (j.mensaje || "listo") : (j.error || "no se pudo")), !!j.ok);
+      })
+      .catch(() => toast((f.dataset.nombre || "") + ": error de red", false))
+      .finally(() => { if (b) delete b.dataset.busy; if (icon) icon.className = oldCls; });
   }));
 })();
 </script>

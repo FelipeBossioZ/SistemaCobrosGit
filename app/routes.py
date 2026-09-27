@@ -664,20 +664,29 @@ def clientes_sync_maestro():
 @bp.route("/clientes/<int:cid>/cuenta-expresa", methods=["POST"])
 def cliente_cuenta_expresa(cid):
     """Un clic: crea la cuenta con lo presupuestado (a toda la familia si el cliente
-    es pagador de grupo) y guarda el PDF en la carpeta de Parámetros."""
+    es pagador de grupo) y guarda el PDF en la carpeta de Parámetros.
+    Por fetch (listado) responde JSON: toast en pantalla y la pagina NO se recarga."""
     a = anio_actual()
     cli = db.get_or_404(Cliente, cid)
     destino = request.referrer or url_for("main.clientes")
-    if not a:
-        flash("No hay año activo", "error")
+
+    def _res(msg, tipo="ok"):
+        if request.accept_mimetypes.best == "application/json":
+            if tipo == "ok":
+                return jsonify(ok=True, mensaje=msg)
+            return jsonify(ok=False, error=msg)
+        flash(msg, tipo)
         return redirect(destino)
+
+    if not a:
+        return _res("No hay año activo", "error")
     ya = (CuentaLinea.query.join(CuentaCobro)
           .filter(CuentaLinea.cliente_id == cli.id,
                   CuentaCobro.anio_cobro_id == a.id,
                   CuentaLinea.estado == "ACTIVA",
                   CuentaCobro.estado != "ANULADA").first())
     if ya:
-        # ya está en una cuenta BORRADOR sin .eml → complétala: PDF + borrador de Outlook
+        # ya esta en una cuenta BORRADOR sin .eml -> completala: PDF + borrador de Outlook
         yacuenta = ya.cuenta
         if yacuenta.estado == "BORRADOR" and not yacuenta.envios.first():
             pagador = yacuenta.pagador_principal
@@ -688,23 +697,19 @@ def cliente_cuenta_expresa(cid):
                                      nota=f"Borrador .eml generado en {ccorreos} (para {pagador.email})"))
                 yacuenta.estado = "ENVIADA"
                 db.session.commit()
-                flash(f"{cli.nombre} ya estaba en la cuenta {yacuenta.numero_formateado} (BORRADOR). "
-                      f"La completé: PDF y borrador de Outlook (.eml) listos en {ccorreos}", "ok")
-            else:
-                flash(f"{cli.nombre} ya está en la cuenta BORRADOR {yacuenta.numero_formateado}, "
-                      f"pero el pagador no tiene correo guardado en su ficha.", "error")
-        else:
-            sobre = " (con borrador de Outlook ya generado: usa el sobre ✉)" if yacuenta.envios.first() else ""
-            flash(f"{cli.nombre} ya está en la cuenta {yacuenta.numero_formateado} de este año{sobre}", "error")
-        return redirect(destino)
+                return _res(f"{cli.nombre} ya estaba en la cuenta {yacuenta.numero_formateado} (BORRADOR). "
+                            f"La completé: PDF y borrador de Outlook (.eml) listos en {ccorreos}")
+            return _res(f"{cli.nombre} ya está en la cuenta BORRADOR {yacuenta.numero_formateado}, "
+                        f"pero el pagador no tiene correo guardado en su ficha.", "error")
+        sobre = " (con borrador de Outlook ya generado: usa el sobre \u2709\ufe0f)" if yacuenta.envios.first() else ""
+        return _res(f"{cli.nombre} ya está en la cuenta {yacuenta.numero_formateado} de este año{sobre}", "error")
     miembros = ([m for m in cli.grupo.miembros if m.activo]
                 if cli.es_pagador and cli.grupo_id else [cli])
     lineas = []
     for m in miembros:
         p = PresupuestoCliente.query.filter_by(cliente_id=m.id, anio_cobro=a.anio_cobro).first()
         if not p or p.valor <= 0:
-            flash(f"{m.nombre} no tiene presupuesto {a.anio_cobro}. Cuenta no creada.", "error")
-            return redirect(destino)
+            return _res(f"{m.nombre} no tiene presupuesto {a.anio_cobro}. Cuenta no creada.", "error")
         lineas.append((m, p.valor))
     cuenta = CuentaCobro(anio_cobro_id=a.id, numero=_numero_libre(a),
                          fecha=date.today(), estado="BORRADOR")
@@ -719,7 +724,7 @@ def cliente_cuenta_expresa(cid):
     ruta = os.path.join(carpeta, _nombre_pdf(cuenta))
     generar_pdf(cuenta, ruta)
     total = sum(v for _, v in lineas)
-    # expreso completo: si el pagador tiene correo, deja también el borrador .eml listo
+    # expreso completo: si el pagador tiene correo, deja tambien el borrador .eml listo
     pagador = cuenta.pagador_principal
     base = f"Cuenta {cuenta.numero_formateado} creada ($ {total:,.0f}) y PDF en: {ruta}"
     if pagador and (pagador.email or "").strip():
@@ -729,10 +734,8 @@ def cliente_cuenta_expresa(cid):
                              nota=f"Borrador .eml generado en {ccorreos} (para {pagador.email})"))
         cuenta.estado = "ENVIADA"
         db.session.commit()
-        flash(base + f". Borrador de Outlook (.eml) listo en {ccorreos}", "ok")
-    else:
-        flash(base + ". El pagador no tiene correo guardado: solo quedó el PDF.", "ok")
-    return redirect(destino)
+        return _res(base + f". Borrador de Outlook (.eml) listo en {ccorreos}")
+    return _res(base + ". El pagador no tiene correo guardado: solo quedó el PDF.")
 
 
 @bp.route("/clientes/<int:cid>/trabajo-nuevo", methods=["POST"])

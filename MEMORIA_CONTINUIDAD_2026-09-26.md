@@ -163,6 +163,12 @@ Decisiones de Felipe (cerradas): 1) el presupuesto NUNCA se digita: se construye
 - DUDA DE DISENO PARA FELIPE (no bloquea): fila OK con cuenta ENVIADA sin pagos sigue OK (estado de cuenta vs estado de pago son cosas distintas). En el Excel si se resalta en naranja. Si quiere badge PENDIENTE DE PAGO visible en la pagina para los OK sin pago, avisar.
 - PENDIENTE produccion: cc598ff (auditoria pagado) cuando Felipe apruebe.
 
+## 4n. EMAIL EN FILA + COLUMNA # (27/09 ~16:45, 4cfa254 en 777, pendiente produccion)
+- Felipe: para clientes sin correo tenia que abrir ficha, editar, guardar y volver a buscar su lugar. AHORA: (1) ruta POST /clientes/<id>/email-rapido (valida @ y punto en dominio; lower; JSON o flash+redirect); (2) columna Contacto del listado tiene input de correo + boton check por fila, submit por fetch (FormData), toast de confirmacion, quita el aviso amarillo de sin-correo al guardar; (3) aviso sobre amarillo si cli.email vacio.
+- Columna NUEVA '#' junto a Cod.: numero de orden en la VISTA (1..N por nombre) via dict nlista {orden: cliente_id} construido en clientes() y pasado al render; en 'cobrables' el # es el orden de esa vista. NO es el codigo historico (Cod. sigue igual).
+- colspan fila vacia 12->13. Prueba end-to-end con test_client: guardar/invalido/restaurar JSON OK; email de prueba restaurado y verificado en BD (ian18663@gmail.com). Sobre->False para ese cliente es correcto (no tiene cuenta el anio, no es por correo).
+- PENDIENTE produccion: cc598ff (auditoria pagado) + 4cfa254 (email+#) cuando Felipe apruebe.
+
 ## 5. PREGUNTAS ABIERTAS (las respuestas llegan por chat)
 Q1 renta base: ¿guardar al confirmar (recomendado, auditable) o derivar en vivo?
 Q2 sin match en maestro: se marca y se lista (propuesto y aceptado en linea general: color + nota visible).

@@ -540,8 +540,9 @@ def cliente_correo(cid):
 @bp.route("/clientes/<int:cid>/imagen", methods=["GET", "POST"])
 def cliente_imagen(cid):
     """Imagen PNG de la cuenta (para WhatsApp) desde el listado: la guarda en la
-    carpeta de imagenes parametrizada (Parametros) y queda lista para adjuntar.
-    Por fetch devuelve JSON y la pagina NO se recarga; sin JS, redirige con flash."""
+    carpeta de imagenes parametrizada (Parametros) y TAMBIEN la descarga al
+    navegador, lista para adjuntar. Por fetch NO recarga la pagina (blob);
+    sin JS, redirige con flash."""
     from .imagen_cuenta import generar_imagen, _nombre_imagen
     cli = db.get_or_404(Cliente, cid)
     a = anio_actual()
@@ -565,8 +566,12 @@ def cliente_imagen(cid):
     ruta = os.path.join(carpeta, _nombre_imagen(cuenta))
     generar_imagen(cuenta, ruta)
     if request.accept_mimetypes.best == "application/json":
-        return jsonify(ok=True, ruta=ruta, nombre=os.path.basename(ruta),
-                       mensaje=f"Imagen lista en {carpeta}")
+        # guarda en carpeta Y descarga al navegador (blob), sin recargar
+        resp = send_file(ruta, as_attachment=True,
+                         download_name=os.path.basename(ruta))
+        resp.headers["X-Nombre"] = os.path.basename(ruta)
+        resp.headers["X-Mensaje"] = "Imagen descargada y guardada en la carpeta de imagenes"
+        return resp
     flash(f"Imagen guardada en: {ruta}", "ok")
     return redirect(destino)
 

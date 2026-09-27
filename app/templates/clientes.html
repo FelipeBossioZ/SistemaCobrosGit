@@ -169,10 +169,24 @@
       ? "{{ url_for('main.cliente_correo', cid=0) }}".replace("/0/", "/" + b.dataset.cid + "/")
       : "{{ url_for('main.cliente_imagen', cid=0) }}".replace("/0/", "/" + b.dataset.cid + "/");
     fetch(url, { headers: { "Accept": "application/json" } })
-      .then(r => r.json())
-      .then(j => {
-        if (j.ok) toast(b.dataset.nombre + ": " + (j.mensaje || "listo"), true);
-        else toast(b.dataset.nombre + ": " + (j.error || "no se pudo"), false);
+      .then(r => {
+        const ct = (r.headers.get("Content-Type") || "");
+        if (b.dataset.acc === "imagen" && r.ok && ct.indexOf("image/") === 0) {
+          return r.blob().then(blob => {
+            const aUrl = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = aUrl;
+            a.download = r.headers.get("X-Nombre") || "imagen_cuenta.png";
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(aUrl), 4000);
+            toast(b.dataset.nombre + ": " + (r.headers.get("X-Mensaje") || "imagen lista"), true);
+          });
+        }
+        return r.json().then(j => {
+          toast(b.dataset.nombre + ": " + (j.ok ? (j.mensaje || "listo") : (j.error || "no se pudo")), !!j.ok);
+        });
       })
       .catch(() => toast(b.dataset.nombre + ": error de red", false))
       .finally(() => {

@@ -173,6 +173,11 @@ Decisiones de Felipe (cerradas): 1) el presupuesto NUNCA se digita: se construye
 - Felipe: 'que solo habilite edicion cuando yo quiera'. La columna Contacto volvio a SOLO LECTURA (sobre + email visible / sobre amarillo 'sin correo'); arriba junto al buscador hay interruptor 'Editar correos' que activa la clase edita-email en la tabla y muestra los inputs (CSS display none->flex con !important sobre el style inline). Al activar, focus al primer input. El guardado fetch/JSON no cambio. Respaldo clientes.html.toggle.bak. Verificado con test_client: toggle/css/vistas/JS presentes, /clientes 200.
 - PENDIENTE produccion: cc598ff (auditoria pagado) + 4cfa254 + toggle (este commit) cuando Felipe apruebe.
 
+## 4p. SOBRE CLICKABLE POR FILA (27/09 ~17:58, en 777)
+- Felipe: 'si estoy en el cliente 200 me toca subir y activar el interruptor; quiero dar clic al sobre y editar ahi mismo'. HECHO: el sobre de la vista de lectura es ahora un enlace (.email-edit, cursor pointer): delegacion de clics en #tablaClientes -> agrega clase editando AL TD de esa fila (solo esa fila muestra el form, focus+select al input). ESC cierra la fila sin guardar. Al guardar OK: icono del boton pasa a chulo bi-check-circle-fill verde 2.5s, la vista de lectura se reconstruye con el correo nuevo (textContent, sin innerHTML) y muestra un chulo verde 6.5s, luego la fila se cierra sola. El interruptor global SIGUE para editar varios seguidos. Ambas vias (toggle y sobre) conviven via CSS: .edita-email (tabla) y td.editando (fila).
+- Verificado test_client: sobre clickable >100 filas, css td.editando, delegacion, chulo, Escape, /clientes 200.
+- PENDIENTE produccion: cc598ff (auditoria pagado) + 4cfa254 + 7a7a617 (toggle) + este, cuando Felipe apruebe.
+
 ## 5. PREGUNTAS ABIERTAS (las respuestas llegan por chat)
 Q1 renta base: ¿guardar al confirmar (recomendado, auditable) o derivar en vivo?
 Q2 sin match en maestro: se marca y se lista (propuesto y aceptado en linea general: color + nota visible).

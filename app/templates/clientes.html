@@ -2,6 +2,7 @@
 {% block title %}Clientes{% endblock %}
 {% block content %}
 <style>
+  a.con-tareas { background-color: #fff3cd; border-radius: 4px; padding: 0 4px; box-shadow: 0 0 0 1px #ffe69c inset; }
   #tablaClientes .form-email { display: none !important; }
   #tablaClientes.edita-email .form-email,
   #tablaClientes td.editando .form-email { display: flex !important; }
@@ -65,9 +66,14 @@
         <td class="text-muted small">{{ nlista.get(cli.id) }}</td><td>{{ cli.codigo }}</td>
         <td>
           <a href="{{ url_for('main.cliente_detalle', cid=cli.id) }}"
-             class="{% if estados_cobro.get(cli.id) == 'pagada' %}cobro-pagada{% elif estados_cobro.get(cli.id) == 'enviada' %}cobro-enviada{% endif %}">{{ cli.nombre }}</a>
+             class="{% if estados_cobro.get(cli.id) == 'pagada' %}cobro-pagada{% elif estados_cobro.get(cli.id) == 'enviada' %}cobro-enviada{% endif %}{% if cli.tareas_pend %} con-tareas{% endif %}"
+             {% if cli.tareas_pend %}title="{{ cli.tareas_pend|length }} tarea(s) pendiente(s). Ultima: {{ cli.tareas_pend[0].texto }}"{% endif %}>{{ cli.nombre }}</a>
           {% if estados_cobro.get(cli.id) == 'pagada' %}<i class="bi bi-check-circle-fill text-success" title="Ya pagó su cuenta de cobro este año"></i>
           {% elif estados_cobro.get(cli.id) == 'enviada' %}<i class="bi bi-send-fill text-primary" title="Cuenta de cobro enviada (falta pago)"></i>{% endif %}
+          <a role="button" class="tarea-open text-decoration-none" data-cid="{{ cli.id }}" data-nombre="{{ cli.nombre }}"
+             title="Nota / tarea para este cliente - clic para abrir"><i class="bi bi-journal-plus {% if cli.tareas_pend %}text-warning{% else %}text-secondary-emphasis opacity-50{% endif %}"></i></a>
+          {% if cli.tareas_pend %}<a role="button" class="tarea-open adv-tarea text-decoration-none" data-cid="{{ cli.id }}" data-nombre="{{ cli.nombre }}"
+             title="{{ cli.tareas_pend|length }} tarea(s) pendiente(s) - clic para verlas"><i class="bi bi-exclamation-triangle-fill text-warning"></i></a>{% endif %}
           {% if cli.es_pagador %}<span class="badge bg-info text-dark" title="Pagador del grupo">pagador</span>{% endif %}
           {% if not cli.activo %}<span class="badge bg-secondary">inactivo</span>{% endif %}
           {% if maestro_check.get(cli.id) == 'sin NIT' %}<span class="badge bg-warning text-dark" title="Este cliente no tiene NIT guardado: el motor no puede buscarlo en el maestro">sin NIT - no en maestro</span>
@@ -162,6 +168,7 @@
   </div>
 </div>
 
+{% include "_tareas_cliente.html" %}
 <div class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index: 2000;">
   <div id="toastAcc" class="toast align-items-center border-0" role="alert" aria-live="assertive" aria-atomic="true">
     <div class="d-flex">
@@ -322,6 +329,118 @@
       .catch(() => toast((f.dataset.nombre || "") + ": error de red", false))
       .finally(() => { if (b) delete b.dataset.busy; });
   }));
+
+  /* ====== Tareas por cliente (modal) ====== */
+  let mtCid = null;
+  const modalEl = document.getElementById("modalTareas");
+  const modalT = modalEl ? new bootstrap.Modal(modalEl) : null;
+  const mtLista = document.getElementById("mtLista");
+  function ajustaBadge(delta) {
+    document.querySelectorAll(".navbar .badge.text-bg-warning").forEach(bd => {
+      let n = parseInt(bd.textContent || "0", 10) + delta;
+      if (n <= 0) bd.remove(); else bd.textContent = n;
+    });
+  }
+  function el(tag, cls, txt) {
+    const x = document.createElement(tag);
+    if (cls) x.className = cls;
+    if (txt !== undefined) x.textContent = txt;
+    return x;
+  }
+  function filaTarea(t, hecha) {
+    const row = el("div", "d-flex align-items-start gap-1 py-1 border-bottom");
+    if (hecha) {
+      row.appendChild(el("i", "bi bi-check-circle-fill text-success mt-1"));
+      row.appendChild(el("span", "flex-grow-1 text-decoration-line-through text-secondary", t.texto));
+    } else {
+      const b2 = el("button", "btn btn-sm btn-success py-0");
+      b2.title = "Marcar HECHA";
+      b2.appendChild(el("i", "bi bi-check-lg"));
+      b2.addEventListener("click", () => accionTarea("/tareas/" + t.id + "/estado", b2));
+      row.appendChild(b2);
+      row.appendChild(el("span", "flex-grow-1 fw-semibold", t.texto));
+    }
+    const bd = el("button", "btn btn-sm btn-outline-danger py-0 ms-auto");
+    bd.title = "Borrar del historial";
+    bd.appendChild(el("i", "bi bi-trash"));
+    bd.addEventListener("click", () => {
+      if (!confirm("\u00bfBorrar definitivamente esta tarea?")) return;
+      accionTarea("/tareas/" + t.id + "/borrar", bd);
+    });
+    row.appendChild(bd);
+    row.appendChild(el("span", "text-muted small ms-1", "(" + t.fecha + ")"));
+    return row;
+  }
+  function pintarTareas(j) {
+    mtLista.textContent = "";
+    if (!(j.pend || []).length && !(j.hechas || []).length) {
+      mtLista.appendChild(el("div", "text-muted py-2", "Sin tareas todav\u00eda."));
+      return;
+    }
+    (j.pend || []).forEach(t => mtLista.appendChild(filaTarea(t, false)));
+    if ((j.hechas || []).length) {
+      const h = el("div", "text-muted small mt-2 mb-1", "Hechas (historial):");
+      mtLista.appendChild(h);
+      j.hechas.forEach(t => mtLista.appendChild(filaTarea(t, true)));
+    }
+  }
+  function cargarTareas() {
+    return fetch("{{ url_for('main.cliente_tareas', cid=0) }}".replace("/0/", "/" + mtCid + "/"),
+                 { headers: { "Accept": "application/json" } })
+      .then(r => r.json()).then(j => { pintarTareas(j); return j; });
+  }
+  function accionTarea(url, b2) {
+    if (b2.dataset.busy) return;
+    b2.dataset.busy = "1";
+    fetch(url, { method: "POST", headers: { "Accept": "application/json" } })
+      .then(r => r.json())
+      .then(j => {
+        if (!j.ok) { toast(j.error || "no se pudo", false); return; }
+        toast(j.mensaje || "listo", true);
+        ajustaBadge(url.indexOf("/estado") >= 0 ? (j.hecha ? -1 : 1) : (url.indexOf("/borrar") >= 0 ? (b2.closest(".d-flex").querySelector(".bi-check-circle-fill") ? 0 : -1) : 0));
+        cargarTareas();
+        const fila = document.getElementById("filaCliente" + mtCid);
+        if (fila) location.hash = "";
+      })
+      .catch(() => toast("error de red", false))
+      .finally(() => { delete b2.dataset.busy; });
+  }
+  /* clic en el aviso: abre el modal */
+  if (tabla) tabla.addEventListener("click", e => {
+    const t2 = e.target.closest(".tarea-open");
+    if (!t2 || !modalT) return;
+    e.preventDefault();
+    mtCid = t2.dataset.cid;
+    document.getElementById("mtNombre").textContent = t2.dataset.nombre;
+    modalT.show();
+    cargarTareas();
+  });
+  /* nueva tarea desde el modal */
+  const mtForm = document.getElementById("mtForm");
+  mtForm.addEventListener("submit", e => {
+    e.preventDefault();
+    const inp = mtForm.querySelector("input");
+    if (!inp.value.trim()) return;
+    const b2 = mtForm.querySelector("button");
+    if (b2.dataset.busy) return;
+    b2.dataset.busy = "1";
+    fetch("{{ url_for('main.cliente_tarea_nueva', cid=0) }}".replace("/0/", "/" + mtCid + "/"),
+          { method: "POST", body: new FormData(mtForm), headers: { "Accept": "application/json" } })
+      .then(r => r.json())
+      .then(j => {
+        if (!j.ok) { toast(j.error || "no se pudo", false); return; }
+        toast(j.mensaje || "tarea guardada", true);
+        inp.value = "";
+        ajustaBadge(1);
+        const nom = document.querySelector('#filaCliente' + mtCid + ' a.con-tareas, #filaCliente' + mtCid + ' td a[href*="cliente_detalle"]');
+        if (nom && !nom.classList.contains("con-tareas")) nom.classList.add("con-tareas");
+        const ad = document.getElementById("filaCliente" + mtCid + " .adv-tarea");
+        if (ad) ad.innerHTML = '<i class="bi bi-exclamation-triangle-fill text-warning"></i>';
+        cargarTareas();
+      })
+      .catch(() => toast("error de red", false))
+      .finally(() => { delete b2.dataset.busy; });
+  });
 })();
 </script>
 <script>

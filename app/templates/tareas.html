@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Tareas{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h3 class="mb-1"><i class="bi bi-card-checklist"></i> Tareas</h3>
+    <div class="text-muted small">Notas rapidas por cliente: llamadas pendientes, tr&aacute;mites, recordatorios.
+      Quedan en historial al marcarlas hechas.</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('main.clientes') }}">Volver</a>
+</div>
+
+<ul class="nav nav-pills mb-3">
+  <li class="nav-item"><a class="nav-link {{ 'active' if ver == 'pendientes' }}" href="{{ url_for('main.tareas', ver='pendientes') }}">Pendientes</a></li>
+  <li class="nav-item"><a class="nav-link {{ 'active' if ver == 'hechas' }}" href="{{ url_for('main.tareas', ver='hechas') }}">Hechas (historial)</a></li>
+</ul>
+
+<div class="card">
+  <div class="table-responsive">
+  <table class="table table-sm table-hover mb-0">
+    <thead><tr><th style="width: 130px">Fecha</th><th style="width: 260px">Cliente</th><th>Tarea</th><th style="width: 210px"></th></tr></thead>
+    <tbody>
+    {% for t in tareas %}
+      <tr id="fila-t{{ t.id }}" class="{{ 'table-warning' if not t.hecha }}">
+        <td class="text-muted small">{{ t.fecha.strftime('%d/%m/%Y') }}</td>
+        <td><a href="{{ url_for('main.cliente_detalle', cid=t.cliente_id) }}">{{ t.cliente.nombre }}</a></td>
+        <td {% if not t.hecha %}class="fw-semibold"{% endif %}{% if t.hecha %} style="text-decoration: line-through;"{% endif %}>{{ t.texto }}</td>
+        <td class="text-end">
+          <form class="d-inline form-accion-tarea" method="post" action="{{ url_for('main.cliente_tarea_estado', tid=t.id) }}">
+            {% if t.hecha %}
+              <button class="btn btn-sm btn-outline-secondary" title="Devolver a pendiente"><i class="bi bi-arrow-counterclockwise"></i></button>
+            {% else %}
+              <button class="btn btn-sm btn-success" title="Marcar HECHA"><i class="bi bi-check-lg"></i></button>
+            {% endif %}
+          </form>
+          <form class="d-inline form-accion-tarea" method="post" action="{{ url_for('main.cliente_tarea_borrar', tid=t.id) }}"
+                onsubmit="return confirm('&iquest;Borrar definitivamente esta tarea del historial?');">
+            <button class="btn btn-sm btn-outline-danger" title="Borrar del historial"><i class="bi bi-trash"></i></button>
+          </form>
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4" class="text-center text-muted py-4">
+        {% if ver == 'pendientes' %}No hay tareas pendientes. <i class="bi bi-check-circle text-success"></i>
+        {% else %}Todav&iacute;a no hay tareas en el historial.{% endif %}
+      </td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+{% block scripts %}
+<script>
+/* Chulo en la pagina Tareas: fetch para no recargar y quitar la fila al instante. */
+document.querySelectorAll(".form-accion-tarea").forEach(f => f.addEventListener("submit", e => {
+  e.preventDefault();
+  const b = f.querySelector("button");
+  if (b && b.dataset.busy) return;
+  if (b) b.dataset.busy = "1";
+  const fila = f.closest("tr");
+  fetch(f.action, { method: "POST", headers: { "Accept": "application/json" } })
+    .then(r => r.json())
+    .then(j => {
+      if (!j.ok) { alert(j.error || "no se pudo"); return; }
+      if (f.action.indexOf("/estado") >= 0 && fila) {
+        const ic = b.querySelector("i");
+        ic.className = "bi bi-check-circle-fill";
+        setTimeout(() => fila.remove(), 650);
+      } else if (fila) {
+        fila.remove();
+      }
+    })
+    .catch(() => alert("error de red"))
+    .finally(() => { if (b) delete b.dataset.busy; });
+}));
+</script>
+{% endblock %}
+{% endblock %}

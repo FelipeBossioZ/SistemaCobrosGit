@@ -13,7 +13,8 @@ from flask import (Blueprint, render_template, request, redirect, url_for,
 from .models import (db, Parametro, AnioCobro, GrupoFamiliar, Cliente,
                      PresupuestoCliente, CuentaCobro, CuentaLinea, Envio,
                      Ajuste, Pago, ESTADOS, TrabajoAdicional, saludo_de_cliente,
-                     AsesoriaCatalogo, AsesoriaCliente, PresupuestoHistorial)
+                     AsesoriaCatalogo, AsesoriaCliente, PresupuestoHistorial,
+                     Tarea)
 from .pdf_generator import generar_pdf, ruta_pdf
 from . import rutas_comunes
 
@@ -225,6 +226,12 @@ def clientes():
         lista = [c for c in lista if c.puede_cobrarse]
     # numero de orden en la vista (1..N, por nombre) para la columna #
     nlista = {i + 1: c.id for i, c in enumerate(lista)}
+    # tareas pendientes por cliente (para el aviso ⚠ en el nombre y el modulo Tareas)
+    tpend = {}
+    for t in Tarea.query.filter_by(hecha=False).order_by(Tarea.fecha.desc(), Tarea.id.desc()):
+        tpend.setdefault(t.cliente_id, []).append(t)
+    for c in lista:
+        c.tareas_pend = tpend.get(c.id, [])
     a = anio_actual()
     presup = {}
     if a:
@@ -1973,6 +1980,93 @@ def cuenta_imagen(cid):
         return jsonify(ok=True, ruta=ruta)
     flash(f"Imagen guardada en: {ruta}", "ok")
     return redirect(request.referrer or url_for("main.cuentas"))
+
+
+# ---------------- Tareas (notas rapidas por cliente) ----------------
+@bp.app_context_processor
+def _tareas_pendientes_global():
+    """Conteo global de tareas pendientes para el badge del menu."""
+    try:
+        n = Tarea.query.filter_by(hecha=False).count()
+    except Exception:
+        n = 0
+    return {"tareas_pend_count": n}
+
+
+@bp.route("/tareas")
+def tareas():
+    """Modulo Tareas: pendientes (y hechas en historial) de todos los clientes."""
+    ver = request.args.get("ver", "pendientes")
+    q = Tarea.query.join(Cliente).filter(Cliente.activo == True)  # noqa: E712
+    if ver == "hechas":
+        q = q.filter(Tarea.hecha == True)   # noqa: E712
+    else:
+        ver = "pendientes"
+        q = q.filter(Tarea.hecha == False)  # noqa: E712
+    lista_t = q.order_by(Tarea.fecha.desc(), Tarea.id.desc()).all()
+    return render_template("tareas.html", ver=ver, tareas=lista_t)
+
+
+@bp.route("/clientes/<int:cid>/tareas")
+def cliente_tareas(cid):
+    """Tareas de un cliente (para el modal del listado)."""
+    cli = db.get_or_404(Cliente, cid)
+    ts = Tarea.query.filter_by(cliente_id=cid).order_by(Tarea.hecha, Tarea.fecha.desc(), Tarea.id.desc()).all()
+    if request.accept_mimetypes.best == "application/json":
+        return jsonify(ok=True,
+                       pend=[{"id": t.id, "texto": t.texto, "fecha": t.fecha.isoformat()} for t in ts if not t.hecha],
+                       hechas=[{"id": t.id, "texto": t.texto, "fecha": t.fecha.isoformat()} for t in ts if t.hecha])
+    return render_template("_tareas_cliente.html", cli=cli, tareas=ts)
+
+
+@bp.route("/clientes/<int:cid>/tarea-nueva", methods=["POST"])
+def cliente_tarea_nueva(cid):
+    """Crea una nota rapida para el cliente."""
+    cli = db.get_or_404(Cliente, cid)
+    texto = (request.form.get("texto") or "").strip()
+    if not texto:
+        if request.accept_mimetypes.best == "application/json":
+            return jsonify(ok=False, error="La nota esta vacia")
+        flash("La nota esta vacia", "error")
+        return redirect(request.referrer or url_for("main.clientes"))
+    t = Tarea(cliente_id=cid, texto=texto[:500])
+    db.session.add(t)
+    db.session.commit()
+    if request.accept_mimetypes.best == "application/json":
+        n = Tarea.query.filter_by(cliente_id=cid, hecha=False).count()
+        return jsonify(ok=True, id=t.id, pendientes=n,
+                       mensaje=f"tarea guardada ({n} pendiente{'s' if n != 1 else ''} para {cli.nombre})")
+    flash(f"Tarea guardada para {cli.nombre}", "ok")
+    return redirect(request.referrer or url_for("main.clientes"))
+
+
+@bp.route("/tareas/<int:tid>/estado", methods=["POST"])
+def cliente_tarea_estado(tid):
+    """Marca/desmarca hecha una tarea. JSON o redirect segun origen."""
+    t = db.get_or_404(Tarea, tid)
+    t.hecha = not t.hecha
+    db.session.commit()
+    if request.accept_mimetypes.best == "application/json":
+        n = Tarea.query.filter_by(cliente_id=t.cliente_id, hecha=False).count()
+        return jsonify(ok=True, hecha=t.hecha, pendientes=n,
+                       mensaje=("marcada HECHA: " if t.hecha else "volvio a PENDIENTE: ") + t.texto[:80])
+    flash(("Tarea marcada hecha: " if t.hecha else "Tarea devuelta a pendiente: ") + t.texto[:80], "ok")
+    return redirect(request.referrer or url_for("main.tareas"))
+
+
+@bp.route("/tareas/<int:tid>/borrar", methods=["POST"])
+def cliente_tarea_borrar(tid):
+    """Borra definitivamente una tarea (del historial)."""
+    t = db.get_or_404(Tarea, tid)
+    cid = t.cliente_id
+    txt = t.texto[:80]
+    db.session.delete(t)
+    db.session.commit()
+    if request.accept_mimetypes.best == "application/json":
+        n = Tarea.query.filter_by(cliente_id=cid, hecha=False).count()
+        return jsonify(ok=True, pendientes=n, mensaje=f"tarea borrada: {txt}")
+    flash(f"Tarea borrada: {txt}", "ok")
+    return redirect(request.referrer or url_for("main.tareas"))
 
 
 # ---------------- Exportar a Excel ----------------

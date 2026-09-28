@@ -183,6 +183,14 @@ Decisiones de Felipe (cerradas): 1) el presupuesto NUNCA se digita: se construye
 - INCIDENTE (documentar para nunca repetir): en el smoke inclui un POST a /clientes/1/email-rapido 'para validar JSON' y ESO ESCRIBIO en la BD de produccion (cliente 1 Luz Elena quedo con x@y.co). Detectado inmediatamente, restaurado con UPDATE a '' (valor exacto confirmado contra respaldo BD 26/09 y BD del 777, ambas con email vacio). REGLA NUEVA: en produccion los smoke tests son SOLO GET; jamas POST a endpoints con escritura, ni 'de prueba', sin importar lo pequeno del campo.
 - Verificacion post-restauracion: clientes.id=1 email=''. No hubo mas escritos (las otras rutas del smoke eran GET).
 
+## 4r. MODULO TAREAS (27/09 ~20:15, en 777, pendiente produccion)
+- Felipe: notas rapidas por cliente mientras organiza correos ('a esta le tengo que llamar'), modulo Tareas y amarillo cuando hay pendientes. DECISIONES: varias tareas por cliente; hecha queda en HISTORIAL (le sirve para ver trabajos adicionales); sin fechas limite por ahora; amarillo SOLO en el nombre + icono advertencia junto al chulo/azul; sin texto extra, la ULTIMA tarea pendiente se ve en tooltip del nombre.
+- IMPLEMENTADO: modelo Tarea (cliente_id, texto 500, fecha, hecha; backref tareas); endpoints: GET /tareas (pagina con pestañas Pendientes/Hechas), GET /clientes/<id>/tareas (JSON modal / html suelto), POST /clientes/<id>/tarea-nueva, POST /tareas/<id>/estado (toggle hecha), POST /tareas/<id>/borrar; context_processor tareas_pend_count para badge en navbar (Tareas [n] amarillo). clientes(): tpend {cliente_id: [tareas pend]} y c.tareas_pend por cliente.
+- clientes.html: nombre con clase con-tareas (fondo amarillo suave) si hay pendientes, tooltip 'N tarea(s). Ultima: texto'; icono bi-exclamation-triangle-fill junto al chulo/azul, clic abre MODAL (modalTareas en _tareas_cliente.html incluido antes del toast): lista pendientes con chulo + hechas tachadas, borrar con confirm, form nueva tarea; todo por fetch, badge del menu se ajusta solo (ajustaBadge).Pagina /tareas: filas amarillas pendientes, chulo verde hace fetch y quita fila, historial tachado con devolver/borrar.
+- BUGS: (1) Jinja NO tiene filtro strftime -> usar t.fecha.strftime(...); (2) "hecha == True" en filter con columnas reserved ok, pero usar .filter_by(hecha=False) cuando se pueda.
+- PROBADO ciclo completo (crear, amarillo, advertencia, badge, pendientes, hecha, historial tachado, devolver, borrar, amarillo apagado) con cliente 6; datos de prueba BORRADOS (0 residuos).
+- PENDIENTE produccion: modulo Tareas cuando Felipe apruebe.
+
 ## 5. PREGUNTAS ABIERTAS (las respuestas llegan por chat)
 Q1 renta base: ¿guardar al confirmar (recomendado, auditable) o derivar en vivo?
 Q2 sin match en maestro: se marca y se lista (propuesto y aceptado en linea general: color + nota visible).

@@ -63,7 +63,7 @@
     <tbody>
     {% for cli in clientes %}
       <tr data-buscar="{{ cli.codigo }} {{ cli.nombre|lower }} {{ cli.nit }} {{ cli.grupo.nombre|lower if cli.grupo }}">
-        <td class="text-muted small">{{ nlista.get(cli.id) }}</td><td>{{ cli.codigo }}</td>
+        <td class="text-muted small">{{ cli.num_orden }}</td><td>{{ cli.codigo }}</td>
         <td>
           <a href="{{ url_for('main.cliente_detalle', cid=cli.id) }}"
              class="{% if estados_cobro.get(cli.id) == 'pagada' %}cobro-pagada{% elif estados_cobro.get(cli.id) == 'enviada' %}cobro-enviada{% endif %}{% if cli.tareas_pend %} con-tareas{% endif %}"

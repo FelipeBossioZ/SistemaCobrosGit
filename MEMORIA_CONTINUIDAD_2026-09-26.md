@@ -197,6 +197,12 @@ Decisiones de Felipe (cerradas): 1) el presupuesto NUNCA se digita: se construye
 - Leccion prueba falsa-positiva: contar 'con-tareas' en HTML crudo da 1 siempre (esta en el CSS/JS); validar contando solo lineas de anchors, o verificar en BD (COUNT tareas=0).
 - Recordatorio pendiente con fecha ('acuérdame el lunes'): Felipe lo pidio para despues.
 
+## 4t. FIX COLUMNA # (28/09 ~10:20, AMBOS sistemas directo)
+- Felipe reporto: 'None' en numeracion, tildadas al final del listado, saltos 165->8->166. Pidio revisar ANTES de hechar codigo (cumplido: diagnostico completo primero). Aclaro el concepto: la # NO es numero permanente del cliente (para eso esta el Codigo); es SOLO conteo de la vista 1..N, se reordena sola.
+- CAUSA RAIZ UNICA: clientes.html hacia nlista.get(cli.id) pero nlista era {posicion: id} -> colisiones (mostraba el id como numero) y None para ids > N. Ademas ORDER BY nombre de SQLite pone 'A-tilde' despues de 'Z' (ALVAREZ de ultimos, pos 166-169). El bug venia desde que se creo la columna (4n).
+- FIX (en 777 Y produccion directo, backups .numorden.bak): routes.py sort Python con unicodedata (NFD/ascii-ignore/lower) + c.num_orden = i; template usa cli.num_orden; nlista eliminado del render. Python es la calculadora: el orden no se deja a SQLite.
+- VERIFICADO solo-GET en ambos: activos 169, cobrables 72, inactivos 14 -> 0 None, consecutivos 1..N exactos; ALVAREZ CARLOS ENRIQUE queda justo despues de ACEVEDO (alfabeto real). Commits paralelos en pruebas777 y produccion.
+
 ## 5. PREGUNTAS ABIERTAS (las respuestas llegan por chat)
 Q1 renta base: ¿guardar al confirmar (recomendado, auditable) o derivar en vivo?
 Q2 sin match en maestro: se marca y se lista (propuesto y aceptado en linea general: color + nota visible).

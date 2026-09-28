@@ -224,8 +224,12 @@ def clientes():
     lista = query.order_by(Cliente.nombre).all()
     if ver == "cobrables":
         lista = [c for c in lista if c.puede_cobrarse]
-    # numero de orden en la vista (1..N, por nombre) para la columna #
-    nlista = {i + 1: c.id for i, c in enumerate(lista)}
+    # numero de orden en la vista (1..N) para la columna #: solo cuenta clientes visibles.
+    # Orden alfabetico REAL (ignora tildes: SQLite pone 'Á' despues de 'Z').
+    lista = sorted(lista, key=lambda c: unicodedata.normalize("NFD", (c.nombre or ""))
+                   .encode("ascii", "ignore").decode().strip().lower())
+    for _i, _c in enumerate(lista, 1):
+        _c.num_orden = _i
     # tareas pendientes por cliente (para el aviso ⚠ en el nombre y el modulo Tareas)
     tpend = {}
     for t in Tarea.query.filter_by(hecha=False).order_by(Tarea.fecha.desc(), Tarea.id.desc()):
@@ -316,7 +320,7 @@ def clientes():
     return render_template("clientes.html", clientes=lista, ver=ver,
                            presup=presup, a=a, correos=correos,
                            estados_cobro=estados_cobro, pagado_actual=pagado_actual,
-                           maestro_check=maestro_check, nlista=nlista, previo_audit=previo_audit,
+                           maestro_check=maestro_check, previo_audit=previo_audit,
                            previo_sin_emitir=previo_sin_emitir,
                            grupos=GrupoFamiliar.query.order_by(GrupoFamiliar.nombre))
 

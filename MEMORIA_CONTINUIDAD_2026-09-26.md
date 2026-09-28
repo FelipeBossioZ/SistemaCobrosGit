@@ -191,6 +191,12 @@ Decisiones de Felipe (cerradas): 1) el presupuesto NUNCA se digita: se construye
 - PROBADO ciclo completo (crear, amarillo, advertencia, badge, pendientes, hecha, historial tachado, devolver, borrar, amarillo apagado) con cliente 6; datos de prueba BORRADOS (0 residuos).
 - PENDIENTE produccion: modulo Tareas cuando Felipe apruebe.
 
+## 4s. MODULO TAREAS A PRODUCCION (27/09 ~21:10)
+- Felipe aprobo tras probar el boton de nota en 777 (agregado en 46fdbd4: cuaderno bi-journal-plus SIEMPRE visible por fila, gris opaco; se pone amarillo junto con nombre+advertencia cuando hay pendientes; sin tareas nadie podia crear la primera - feedback de Felipe 'no me aparece donde crear la tarea').
+- Deploy: BD respaldada (cobros.db.antes-tareas.bak) + 4 archivos .tareas.bak; checkout de 6 archivos (models, routes, base, clientes, tareas.html, _tareas_cliente.html); py_compile OK; tabla tareas creada via create_all (create_app ya la crea); smoke SOLO GET: 4 rutas 200, 169 cuadernos, pagina /tareas OK, badge OK, 0 tareas en BD. Commit produccion con modulo completo.
+- Leccion prueba falsa-positiva: contar 'con-tareas' en HTML crudo da 1 siempre (esta en el CSS/JS); validar contando solo lineas de anchors, o verificar en BD (COUNT tareas=0).
+- Recordatorio pendiente con fecha ('acuérdame el lunes'): Felipe lo pidio para despues.
+
 ## 5. PREGUNTAS ABIERTAS (las respuestas llegan por chat)
 Q1 renta base: ¿guardar al confirmar (recomendado, auditable) o derivar en vivo?
 Q2 sin match en maestro: se marca y se lista (propuesto y aceptado en linea general: color + nota visible).

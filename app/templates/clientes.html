@@ -70,7 +70,9 @@
              {% if cli.tareas_pend %}title="{{ cli.tareas_pend|length }} tarea(s) pendiente(s). Ultima: {{ cli.tareas_pend[0].texto }}"{% endif %}>{{ cli.nombre }}</a>
           {% if estados_cobro.get(cli.id) == 'pagada' %}<i class="bi bi-check-circle-fill text-success" title="Ya pagó su cuenta de cobro este año"></i>
           {% elif estados_cobro.get(cli.id) == 'enviada' %}<i class="bi bi-send-fill text-primary" title="Cuenta de cobro enviada (falta pago)"></i>{% endif %}
-          {% if cli.tareas_pend %}<a role="button" class="tarea-open text-decoration-none" data-cid="{{ cli.id }}" data-nombre="{{ cli.nombre }}"
+          <a role="button" class="tarea-open text-decoration-none" data-cid="{{ cli.id }}" data-nombre="{{ cli.nombre }}"
+             title="Nota / tarea para este cliente - clic para abrir"><i class="bi bi-journal-plus {% if cli.tareas_pend %}text-warning{% else %}text-secondary-emphasis opacity-50{% endif %}"></i></a>
+          {% if cli.tareas_pend %}<a role="button" class="tarea-open adv-tarea text-decoration-none" data-cid="{{ cli.id }}" data-nombre="{{ cli.nombre }}"
              title="{{ cli.tareas_pend|length }} tarea(s) pendiente(s) - clic para verlas"><i class="bi bi-exclamation-triangle-fill text-warning"></i></a>{% endif %}
           {% if cli.es_pagador %}<span class="badge bg-info text-dark" title="Pagador del grupo">pagador</span>{% endif %}
           {% if not cli.activo %}<span class="badge bg-secondary">inactivo</span>{% endif %}
@@ -430,6 +432,10 @@
         toast(j.mensaje || "tarea guardada", true);
         inp.value = "";
         ajustaBadge(1);
+        const nom = document.querySelector('#filaCliente' + mtCid + ' a.con-tareas, #filaCliente' + mtCid + ' td a[href*="cliente_detalle"]');
+        if (nom && !nom.classList.contains("con-tareas")) nom.classList.add("con-tareas");
+        const ad = document.getElementById("filaCliente" + mtCid + " .adv-tarea");
+        if (ad) ad.innerHTML = '<i class="bi bi-exclamation-triangle-fill text-warning"></i>';
         cargarTareas();
       })
       .catch(() => toast("error de red", false))

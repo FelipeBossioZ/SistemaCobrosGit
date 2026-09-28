@@ -417,3 +417,17 @@ class Pago(db.Model):
     def formas_pago():
         raw = Parametro.get("formas_pago", "Transferencia|Consignación|Llave Bancolombia|Otro banco|Efectivo")
         return [x.strip() for x in raw.split("|") if x.strip()]
+
+
+class Tarea(db.Model):
+    """Nota rapida / pendiente por cliente (ej. 'llamar', 'falta X').
+    Queda en historial: hecha=False pendiente, hecha=True cumplida."""
+    __tablename__ = "tareas"
+
+    id = db.Column(db.Integer, primary_key=True)
+    cliente_id = db.Column(db.Integer, db.ForeignKey("clientes.id"), nullable=False, index=True)
+    texto = db.Column(db.String(500), nullable=False)
+    fecha = db.Column(db.Date, default=date.today)
+    hecha = db.Column(db.Boolean, default=False, index=True)
+
+    cliente = db.relationship("Cliente", backref="tareas")

@@ -1,0 +1,19 @@
+{# Modal de tareas del cliente #}
+<div class="modal fade" id="modalTareas" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h6 class="modal-title"><i class="bi bi-card-checklist"></i> Tareas de <span id="mtNombre"></span></h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <form id="mtForm" class="d-flex gap-1 mb-2">
+          <input class="form-control form-control-sm" name="texto" maxlength="500"
+                 placeholder="Ej: llamar para confirmar correo...">
+          <button class="btn btn-sm btn-warning" title="Guardar tarea"><i class="bi bi-plus-lg"></i></button>
+        </form>
+        <div id="mtLista" class="small"></div>
+      </div>
+    </div>
+  </div>
+</div>

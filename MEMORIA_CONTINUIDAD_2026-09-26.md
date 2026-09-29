@@ -203,6 +203,14 @@ Decisiones de Felipe (cerradas): 1) el presupuesto NUNCA se digita: se construye
 - FIX (en 777 Y produccion directo, backups .numorden.bak): routes.py sort Python con unicodedata (NFD/ascii-ignore/lower) + c.num_orden = i; template usa cli.num_orden; nlista eliminado del render. Python es la calculadora: el orden no se deja a SQLite.
 - VERIFICADO solo-GET en ambos: activos 169, cobrables 72, inactivos 14 -> 0 None, consecutivos 1..N exactos; ALVAREZ CARLOS ENRIQUE queda justo despues de ACEVEDO (alfabeto real). Commits paralelos en pruebas777 y produccion.
 
+## 4u. NOTA INTERNA EN OTRAS (29/09 ~12:55, en 777, pendiente produccion)
+- Felipe (con captura): al marcar el chulo de 'Otras asesorias (valor libre)' quiere escribir QUE le esta cobrando (storage, visita/reunion, cosas sin base estandar). Debe verse en la ficha y contar en el 'cobrado de mas' de la tarjeta previa, pero NUNCA salir en el PDF del cliente.
+- DECISION CLAVE: nota vive en asesorias_cliente.nota (VARCHAR 120, ALTER TABLE en 777; en produccion habra que ALTER TABLE igual porque create_all no agrega columnas). NO usa CuentaLinea.concepto (ese SI sale en el PDF por linea). El flujo de cuenta nace de PresupuestoCliente.valor (el paquete confirmado baja a presupuesto), y el presupuesto nunca lleva texto -> la nota no puede fugarse al PDF.
+- IMPLEMENTADO: models nota; POST /asesorias guarda nota[:120]; _asesorias_filas expone nota; _estado_asesorias la devuelve; cliente_detalle.html input ac-nota solo en fila OTRAS (placeholder 'Que le estas cobrando?...'), guardarFila la manda, pintar() no la pisa mientras se escribe (document.activeElement), al marcar chulo de OTRAS pone el cursor en la nota.
+- FLUJO DEL COBRO EXTRA: marcar OTRAS + valor + nota -> Recalcular -> Guardar -> presupuesto = paquete -> tarjeta previa en Clientes deja de decir 'de menos' y pasa a OK (o 'de mas' si la cuenta va por arriba por otra razon) -> la cuenta se cobra con esa plata y el PDF intacto, sin mencionar el detalle.
+- PROBADO (777, cliente 6): guardar/releer/BD/paquete_objetivo los cuenta/render/limpieza -> TODO OK. OJO: OTRAS id NO es 990 (eso era el seed); en BD real id=16. Residuos limpiados.
+- PENDIENTE produccion: ALTER TABLE + 3 archivos cuando Felipe apruebe.
+
 ## 5. PREGUNTAS ABIERTAS (las respuestas llegan por chat)
 Q1 renta base: ¿guardar al confirmar (recomendado, auditable) o derivar en vivo?
 Q2 sin match en maestro: se marca y se lista (propuesto y aceptado en linea general: color + nota visible).

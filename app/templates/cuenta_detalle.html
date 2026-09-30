@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+﻿{% extends "base.html" %}
 {% block title %}Cuenta {{ cuenta.numero_formateado }}{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-start mb-3 flex-wrap gap-2">
@@ -35,6 +35,9 @@
           title="Guarda el PDF directamente en la carpeta configurada en Parámetros">
       <button class="btn btn-outline-primary btn-sm"><i class="bi bi-download"></i> Descargar a carpeta</button>
     </form>
+    <button class="btn btn-outline-info btn-sm" data-accion="imagen" data-cid="{{ cuenta.id }}"
+            data-numero="{{ cuenta.numero_formateado }}">
+      <i class="bi bi-image"></i> Imagen WhatsApp</button>
     <button class="btn btn-outline-warning btn-sm" data-accion="enviar" data-cid="{{ cuenta.id }}"
             data-numero="{{ cuenta.numero_formateado }}"><i class="bi bi-send"></i> Registrar envío</button>
     <button class="btn btn-outline-success btn-sm" data-accion="pago" data-cid="{{ cuenta.id }}"
@@ -226,8 +229,31 @@
       <div class="card-header bg-white fw-semibold">Ajustes / descuentos</div>
       <div class="card-body">
         {% for a in cuenta.ajustes %}
-          <div class="small mb-1"><i class="bi bi-arrow-down-circle"></i> -{{ (a.valor)|money }} · {{ a.fecha.strftime('%d/%m/%Y') }}
-            {% if a.motivo %}· {{ a.motivo }}{% endif %}</div>
+          <form class="row g-1 align-items-center small mb-1" method="post"
+                action="{{ url_for('main.ajuste_editar', aid=a.id) }}">
+            <div class="col-auto"><i class="bi bi-arrow-down-circle"></i></div>
+            <div class="col-4 col-md-3">
+              <input class="form-control form-control-sm text-end" name="valor" type="number"
+                     step="1000" value="{{ a.valor|int }}" required title="Valor del ajuste">
+            </div>
+            <div class="col-3 col-md-2">
+              <input class="form-control form-control-sm" name="fecha" type="date"
+                     value="{{ a.fecha.isoformat() }}" title="Fecha">
+            </div>
+            <div class="col">
+              <input class="form-control form-control-sm" name="motivo" value="{{ a.motivo }}"
+                     placeholder="Motivo" title="Motivo (editable)">
+            </div>
+            <div class="col-auto">
+              <button class="btn btn-outline-success btn-sm py-0" title="Guardar cambios">
+                <i class="bi bi-check-lg"></i></button>
+            </div>
+            <div class="col-auto">
+              <button type="button" class="btn btn-outline-danger btn-sm py-0" title="Eliminar ajuste"
+                onclick="if(confirm('¿Eliminar este ajuste por {{ (a.valor)|money }}? El saldo y el PDF se actualizan.')){this.form.action='{{ url_for('main.ajuste_eliminar', aid=a.id) }}';this.form.submit();}">
+                <i class="bi bi-x-lg"></i></button>
+            </div>
+          </form>
         {% else %}
           <p class="text-muted small mb-2">Sin ajustes (ej. autodescuento del cliente).</p>
         {% endfor %}

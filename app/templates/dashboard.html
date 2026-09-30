@@ -45,7 +45,7 @@
       <div class="table-responsive">
       <table class="table table-sm table-hover mb-0">
         <thead><tr><th>Nº</th><th>Fecha</th><th>Clientes</th><th class="num">Total</th>
-          <th class="num">Pagado</th><th class="num">Saldo</th><th>Estado</th><th>Envío</th><th style="width: 170px;">Acciones</th></tr></thead>
+          <th class="num">Pagado</th><th class="num">Saldo</th><th>Estado</th><th>Envío</th><th style="width: 205px;">Acciones</th></tr></thead>
         <tbody>
         {% for c in cuentas %}
           <tr>
@@ -69,6 +69,7 @@
                 <button class="btn btn-sm btn-outline-warning" data-accion="enviar" data-cid="{{ c.id }}" data-numero="{{ c.numero_formateado }}" title="Registrar envío"><i class="bi bi-send"></i></button>
                 <button class="btn btn-sm btn-outline-success" data-accion="pago" data-cid="{{ c.id }}" data-numero="{{ c.numero_formateado }}" data-saldo="{{ c.saldo|int }}" title="Registrar pago"><i class="bi bi-cash-coin"></i></button>
                 <button class="btn btn-sm btn-outline-danger" data-accion="descargar" data-cid="{{ c.id }}" data-numero="{{ c.numero_formateado }}" title="Descargar a carpeta"><i class="bi bi-arrow-down-circle"></i></button>
+                <button class="btn btn-sm btn-outline-primary" data-accion="imagen" data-cid="{{ c.id }}" data-numero="{{ c.numero_formateado }}" title="Imagen PNG para WhatsApp"><i class="bi bi-image"></i></button>
               </div>
             </td>
           </tr>

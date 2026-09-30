@@ -101,10 +101,9 @@ def _render_con_pillow(cuenta, ruta_png):
 
     # ---- banda superior morada ----
     dr.rectangle([0, 0, W, 130], fill=MORADO)
-    em = d.get("emisor", {})
-    dr.text((M, 26), em.get("nombre", ""),
-            font=_una(em.get("nombre", ""), 40, True), fill="white")
-    linea_id = " · ".join(x for x in [em.get("cc", ""), em.get("telefonos", "")] if x)
+    dr.text((M, 26), d.get("emisor_nombre", ""),
+            font=_una(d.get("emisor_nombre", ""), 40, True), fill="white")
+    linea_id = " · ".join(x for x in [d.get("emisor_cc", ""), d.get("emisor_telefonos", "")] if x)
     if linea_id:
         dr.text((M, 86), linea_id, font=_una(linea_id, 18), fill=(230, 224, 240))
     y = 160
@@ -123,8 +122,8 @@ def _render_con_pillow(cuenta, ruta_png):
 
     dr.text((M, y), "Cliente(s):", font=f_txt, fill=GRIS)
     y += 32
-    for ln in d.get("lineas", []):
-        fc, lin = _envuelto(ln.get("nombre", ""), 22)
+    for cli in d.get("clientes", []):
+        fc, lin = _envuelto(cli, 22)
         for l in lin:
             dr.text((M + 16, y), l, font=fc, fill=NEGRO)
             y += AL
@@ -132,24 +131,21 @@ def _render_con_pillow(cuenta, ruta_png):
 
     dr.text((M, y), "Concepto:", font=f_txt, fill=GRIS)
     y += 32
-    fc, lin = _envuelto((d.get("concepto_default", "") or "").replace("\n", " "), 22)
+    fc, lin = _envuelto((d.get("concepto", "") or "").replace("\n", " "), 22)
     for l in lin:
         dr.text((M + 16, y), l, font=fc, fill=NEGRO)
         y += AL
     y += 10
 
     # ---- total destacado ----
-    total = sum(float(ln.get("valor") or 0) for ln in d.get("lineas", [])) \
-        - sum(float(a.get("valor") or 0) for a in d.get("ajustes", []))
-    total = f"${total:,.0f}".replace(",", ".")
-    f_tot = _una(total, 26, True, W - 2 * M - 260)
+    f_tot = _una(str(d.get("total", "")), 26, True, W - 2 * M - 260)
     dr.rectangle([M, y, W - M, y + 64], fill=LILA)
     dr.text((M + 16, y + 16), "TOTAL A PAGAR:", font=f_h2, fill=MORADO)
-    w_tot = _tmp.textlength(total, font=f_tot)
-    dr.text((W - M - 16 - w_tot, y + 16), total, font=f_tot, fill=MORADO)
+    w_tot = _tmp.textlength(str(d.get("total", "")), font=f_tot)
+    dr.text((W - M - 16 - w_tot, y + 16), str(d.get("total", "")), font=f_tot, fill=MORADO)
     y += 92
 
-    banco = "\n".join(d.get("banco", []) or []).strip()
+    banco = (d.get("banco_info", "") or "").strip()
     if banco:
         dr.text((M, y), "Se puede consignar o Transferir en:", font=f_txt, fill=GRIS)
         y += 34
@@ -163,9 +159,8 @@ def _render_con_pillow(cuenta, ruta_png):
                 y += AL
         y += 8
 
-    firma = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                         "Recursos", "Firma.jpg")
-    if os.path.isfile(firma):
+    firma = d.get("firma")
+    if firma and os.path.isfile(firma):
         try:
             fimg = Image.open(firma)
             alto_f = 90
@@ -174,8 +169,8 @@ def _render_con_pillow(cuenta, ruta_png):
             img.paste(fimg, (W - M - ancho_f, y + 10), fimg if fimg.mode == "RGBA" else None)
         except OSError:
             pass
-    dr.text((W - M - 300, y + 104), em.get("nombre", ""),
-            font=_una(em.get("nombre", ""), 18, False, 300), fill=GRIS)
+    dr.text((W - M - 300, y + 104), d.get("emisor_nombre", ""),
+            font=_una(d.get("emisor_nombre", ""), 18, False, 300), fill=GRIS)
     y += 140
 
     img = img.crop((0, 0, W, min(y + M, img.height)))

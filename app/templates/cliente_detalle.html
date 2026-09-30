@@ -78,6 +78,11 @@
           {{ f.it.nombre }}{% if f.it.base_min %} <span class="text-muted small">({{ f.it.base_min }})</span>{% endif %}
           {% if f.en_maestro %}<i class="bi bi-cloud-check text-success" title="Presentada en el maestro{% if f.estados %} ({{ f.estados|join(', ')|lower }}){% endif %}"></i>{% endif %}
           {% if f.nueva %}<span class="badge text-bg-success ms-1" style="font-size:.62em;">nuevo del maestro</span>{% endif %}
+          {% if f.it.codigo == 'OTRAS' %}
+          <input class="form-control form-control-sm ac-nota mt-1" type="text" maxlength="120"
+                 value="{{ f.nota or '' }}" placeholder="Que le estas cobrando? (storage, visita, reunion...)"
+                 title="Solo interno: se ve aqui en la ficha, NUNCA sale en el PDF ni en la imagen del cliente">
+          {% endif %}
         </td>
         <td class="num" style="max-width: 150px;">
           {% if f.fija %}
@@ -315,6 +320,8 @@
       }
       const ci = tr.querySelector(".ac-cant");
       if (ci) ci.value = (st.cantidad != null ? st.cantidad : 1);
+      const ni = tr.querySelector(".ac-nota");
+      if (ni && document.activeElement !== ni) ni.value = st.nota || "";
       const sub = (st.sub != null) ? st.sub : f.sub;
       tr.querySelector(".ac-sub").textContent = (sub && sub > 0) ? money(sub) : "\u00b7";
       tr.classList.toggle("table-light", !inc);
@@ -351,6 +358,8 @@
     if (vi) body.append("valor", vi.value);
     const ci = tr.querySelector(".ac-cant");
     if (ci) body.append("cantidad", ci.value);
+    const ni = tr.querySelector(".ac-nota");
+    if (ni) body.append("nota", ni.value);
     return fetch(location.pathname + "/asesorias", { method: "POST", body })
       .then(r => r.json()).then(adoptar).catch(() => toast("No pude guardar el cambio", false));
   }
@@ -358,7 +367,13 @@
   document.addEventListener("change", e => {
     const t = e.target;
     const tr = t.closest && t.closest("tr[data-ac]");
-    if (tr && (t.classList.contains("ac-incluir") || t.classList.contains("ac-cant"))) guardarFila(tr);
+    if (tr && (t.classList.contains("ac-incluir") || t.classList.contains("ac-cant"))) {
+      guardarFila(tr);
+      if (t.classList.contains("ac-incluir") && t.checked) {
+        const ni = tr.querySelector(".ac-nota");
+        if (ni && !ni.value) setTimeout(() => ni.focus(), 250);
+      }
+    }
   });
 
   /* ---- lapiz: % / valores ---- */

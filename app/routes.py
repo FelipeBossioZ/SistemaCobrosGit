@@ -2492,6 +2492,7 @@ def _asesorias_filas(cli, a, maestro_previo=None):
             "eff_val": (f["eff_val"] if f["fija"] else None),
             "base": (round(base) if (not f["fija"] and base > 0) else None),
             "subtotal": f["sub"],
+            "nota": ((f["x"].nota or "") if f["x"] else ""),
             "en_maestro": f["it"].id in datos,
             "estados": (d[1] if d else []),
             "cant_maestro": (d[0] if d else 0),
@@ -2542,6 +2543,9 @@ def cliente_asesorias(cid):
         x = AsesoriaCliente(cliente_id=cid, asesoria_id=aid)
         db.session.add(x)
     x.incluir = incluir
+    nota = (request.form.get("nota") or "").strip()
+    if nota or x.nota:
+        x.nota = nota[:120]
     pct = (request.form.get("pct") or "").strip()
     val = (request.form.get("valor") or "").strip()
     x.pct = float(pct) if pct else None
@@ -2589,6 +2593,7 @@ def _estado_asesorias(cli, a):
         "confirmado": confirmado,
         "filas": [{"id": f["it"].id, "incluir": bool(f["incluir"]), "fija": bool(f["fija"]),
                    "pct": f["pct"], "valor": f["valor"], "cantidad": f["cantidad"],
+                   "nota": f.get("nota", ""),
                    "sub": round(float(f["subtotal"] or 0)),
                    "en_maestro": bool(f["en_maestro"])} for f in filas],
     }

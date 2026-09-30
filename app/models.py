@@ -201,6 +201,7 @@ class AsesoriaCliente(db.Model):
     pct = db.Column(db.Float)                             # None = estándar
     valor = db.Column(db.Float)                           # None = estándar
     cantidad = db.Column(db.Integer, default=1)           # solo tarifas fijas (IVA, RF...)
+    nota = db.Column(db.String(120), default="")          # OTRAS: que se esta cobrando (solo interno, no sale en PDF)
 
     __table_args__ = (db.UniqueConstraint("cliente_id", "asesoria_id", name="uq_asesoria_cliente"),)
 

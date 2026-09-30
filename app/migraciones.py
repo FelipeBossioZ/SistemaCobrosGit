@@ -59,6 +59,8 @@ def ejecutar(db):
         cols_ac = {r[1] for r in con.execute(text("PRAGMA table_info(asesorias_cliente)"))}
         if cols_ac and "cantidad" not in cols_ac:
             con.execute(text("ALTER TABLE asesorias_cliente ADD COLUMN cantidad INTEGER DEFAULT 1"))
+        if cols_ac and "nota" not in cols_ac:
+            con.execute(text("ALTER TABLE asesorias_cliente ADD COLUMN nota VARCHAR(120) DEFAULT ''"))
         if "renta_base" not in cols:
             con.execute(text("ALTER TABLE clientes ADD COLUMN renta_base FLOAT"))
         con.commit()

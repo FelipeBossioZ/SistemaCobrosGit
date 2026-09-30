@@ -1789,6 +1789,59 @@ def cuenta_ajuste(cid):
     return redirect(url_for("main.cuenta_detalle", cid=cid))
 
 
+@bp.route("/ajustes/<int:aid>/editar", methods=["POST"])
+def ajuste_editar(aid):
+    """Edita valor/fecha/motivo de un ajuste ya registrado y regenera el PDF."""
+    from .pdf_generator import generar_desde_dict, _datos_cuenta
+    a = db.get_or_404(Ajuste, aid)
+    cuenta = a.cuenta
+    f = request.form
+    try:
+        a.valor = float(f.get("valor") or 0)
+    except ValueError:
+        a.valor = 0
+    try:
+        a.fecha = date.fromisoformat(f.get("fecha") or a.fecha.isoformat())
+    except ValueError:
+        pass
+    a.motivo = (f.get("motivo") or "").strip()
+    if cuenta.estado == "ANULADA":
+        flash("La cuenta está ANULADA: no se puede editar el ajuste.", "error")
+        return redirect(url_for("main.cuenta_detalle", cid=cuenta.id))
+    cuenta.marcar_estado()
+    db.session.commit()
+    try:
+        carpeta = _carpeta_pdfs()
+        ruta = os.path.join(carpeta, _nombre_pdf(cuenta))
+        generar_desde_dict(_datos_cuenta(cuenta), ruta)
+    except Exception:
+        pass
+    flash("Ajuste actualizado y PDF regenerado.", "ok")
+    return redirect(url_for("main.cuenta_detalle", cid=cuenta.id))
+
+
+@bp.route("/ajustes/<int:aid>/eliminar", methods=["POST"])
+def ajuste_eliminar(aid):
+    """Elimina un ajuste (valor mal digitado) y regenera el PDF."""
+    from .pdf_generator import generar_desde_dict, _datos_cuenta
+    a = db.get_or_404(Ajuste, aid)
+    cuenta = a.cuenta
+    if cuenta.estado == "ANULADA":
+        flash("La cuenta está ANULADA: no se puede eliminar el ajuste.", "error")
+        return redirect(url_for("main.cuenta_detalle", cid=cuenta.id))
+    db.session.delete(a)
+    cuenta.marcar_estado()
+    db.session.commit()
+    try:
+        carpeta = _carpeta_pdfs()
+        ruta = os.path.join(carpeta, _nombre_pdf(cuenta))
+        generar_desde_dict(_datos_cuenta(cuenta), ruta)
+    except Exception:
+        pass
+    flash("Ajuste eliminado y PDF regenerado.", "ok")
+    return redirect(url_for("main.cuenta_detalle", cid=cuenta.id))
+
+
 @bp.route("/cuentas/<int:cid>/anular", methods=["POST"])
 def cuenta_anular(cid):
     cuenta = db.get_or_404(CuentaCobro, cid)

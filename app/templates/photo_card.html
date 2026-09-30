@@ -77,7 +77,7 @@
     {% for f in filas %}
       <tr>
         <td>{{ loop.index }}</td>
-        <td>{{ f.it.nombre }}{% if f.it.base_min %} <span style="color:#9ca3af; font-size:12px;">({{ f.it.base_min }})</span>{% endif %}</td>
+        <td>{{ f.it.nombre }}{% if f.it.base_min and f.it.base_min != "valor libre" %} <span style="color:#9ca3af; font-size:12px;">({{ f.it.base_min }})</span>{% endif %}{% if f.nota %}<div style="color:#6b7280; font-size:12.5px; margin-top:2px;">{{ f.nota }}</div>{% endif %}</td>
         <td class="num">{% if f.fija %}{{ (f.valor if f.valor is not none else f.it.defecto_valor)|money }}{% else %}{{ "%g"|format(f.eff_pct) }}%{% if f.base %} <span style="color:#9ca3af; font-size:12px;">de {{ f.base|money }}</span>{% endif %}{% endif %}</td>
         <td class="num">{% if f.fija %}{{ f.cantidad or 1 }}{% else %}·{% endif %}</td>
         <td class="num">{{ f.subtotal|money }}</td>

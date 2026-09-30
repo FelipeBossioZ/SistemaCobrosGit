@@ -153,17 +153,32 @@ def _cuerpo_correo(cuenta, pagador, extra=""):
     plural = "\n" in extra          # varias líneas = cuentas/declaraciones múltiples
     nombre = _primer_nombre(pagador)
     saludo = f"Cordial saludo {nombre}," if nombre else "Cordial saludo,"
-    if plural:
-        nums = [l.cuenta.numero_formateado for l in cuenta.lineas if l.estado == "ACTIVA"]
-        detalle = (f"Adjunto las cuentas de cobro números {', '.join(nums[:-1])} y {nums[-1]} "
-                   "correspondientes a las asesorías prestadas este año.") if len(nums) > 1 else \
-                  (f"Adjunto la cuenta de cobro número {nums[0]} correspondiente a la asesoría prestada este año."
-                   if nums else "")
-        aviso = "Tan pronto se efectúe el pago por favor nos notifican para asentar la cancelación de las cuentas de cobro."
+    # Declaración de renta SIEMPRE al inicio; en plural cuando es grupo familiar.
+    # (De paso: números de cuenta SIN duplicar — antes repetía el mismo número.)
+    lineas_act = [l for l in cuenta.lineas if l.estado == "ACTIVA"]
+    familia = (bool(getattr(pagador, "grupo", None))
+               or len({l.cliente_id for l in lineas_act}) > 1)
+    decl = ("las declaraciones de renta presentadas" if familia
+            else "la declaración de renta presentada")
+    nums = sorted({l.cuenta.numero_formateado for l in lineas_act}) or [cuenta.numero_formateado]
+    if len(nums) > 1:
+        lista = ", ".join(nums[:-1]) + " y " + nums[-1]
+        detalle = (f"Adjunto {decl} y las cuentas de cobro números {lista} "
+                   "correspondientes a las asesorías prestadas este año.")
+    elif familia:
+        detalle = (f"Adjunto {decl} y la cuenta de cobro número {nums[0]} "
+                   "correspondientes a las asesorías prestadas este año.")
     else:
-        detalle = (f"Adjunto la cuenta de cobro número {cuenta.numero_formateado} "
+        detalle = (f"Adjunto {decl} y la cuenta de cobro número {nums[0]} "
                    "correspondiente a la asesoría prestada este año.")
-        aviso = "Tan pronto se efectúe el pago por favor nos notifica para asentar la cancelación de la cuenta de cobro."
+    if familia or plural:
+        aviso = ("Tan pronto se efectúe el pago por favor nos notifican para asentar "
+                 "la cancelación de las cuentas de cobro." if len(nums) > 1 else
+                 "Tan pronto se efectúe el pago por favor nos notifican para asentar "
+                 "la cancelación de la cuenta de cobro.")
+    else:
+        aviso = ("Tan pronto se efectúe el pago por favor nos notifica para asentar "
+                 "la cancelación de la cuenta de cobro.")
     partes = [saludo, "", detalle]
     if extra:
         partes += [extra, ""]
@@ -1901,7 +1916,7 @@ def _generar_eml(cuenta, carpeta, extra=""):
     eml["Subject"] = asunto
     eml["Date"] = formatdate(localtime=True)
     eml["Message-ID"] = make_msgid()
-    eml.set_content(cuerpo)
+    eml.set_content(cuerpo, cte="8bit")   # UTF-8 plano: sin =C3=.. ni cortes de línea tipo "can=celación"
     with open(ruta_pdf, "rb") as fh:
         eml.add_attachment(fh.read(), maintype="application", subtype="pdf",
                            filename=os.path.basename(ruta_pdf))

@@ -38,15 +38,22 @@ def _render_con_pdf2image(ruta_pdf, ruta_png):
 
 
 def _render_con_pillow(cuenta, ruta_png):
-    """Lámina dibujada directamente (sin Poppler/pymupdf). Vertical, estilo WhatsApp."""
+    """Lámina dibujada directamente (sin Poppler/pymupdf). Vertical, estilo WhatsApp.
+    Anti-cortes: los textos largos se parten en varias líneas, la fuente se encoge
+    si una línea no cabe y el lienzo crece en altura; ninguna línea se sale jamás
+    por la derecha."""
     from PIL import Image, ImageDraw, ImageFont
 
     d = _datos_cuenta(cuenta)
     W = 1000
     M = 56            # margen
     MORADO = (74, 44, 114)
+    LILA = (243, 239, 250)
     GRIS = (110, 110, 110)
     NEGRO = (33, 33, 33)
+    ANCHO_UT = W - 2 * M - 16   # ancho útil para líneas con sangría
+
+    _tmp = ImageDraw.Draw(Image.new("RGB", (8, 8)))
 
     def fuente(tam, negrita=False):
         nombres = ["arialbd.ttf" if negrita else "arial.ttf",
@@ -59,52 +66,83 @@ def _render_con_pillow(cuenta, ruta_png):
                 continue
         return ImageFont.load_default()
 
-    f_titulo = fuente(40, True)
-    f_h2 = fuente(26, True)
-    f_txt = fuente(22)
-    f_peq = fuente(18)
+    def _una(texto, tam, negrita=False, ancho=W - 2 * M):
+        """Devuelve la fuente encogida hasta que el texto quepa en UNA línea."""
+        tam = int(tam)
+        f = fuente(tam, negrita)
+        while tam > 14 and _tmp.textlength(texto, font=f) > ancho:
+            tam -= 2
+            f = fuente(tam, negrita)
+        return f
 
-    # altura estimada por bloques: se dibuja con cursor y la imagen se recorta al final
-    img = Image.new("RGB", (W, 1900), "white")
+    def _envuelto(texto, tam, negrita=False, ancho=ANCHO_UT):
+        """Devuelve (fuente, líneas) con ajuste de palabra; encoge hasta que
+        TODAS las líneas quepan en el ancho útil."""
+        tam = int(tam)
+        while tam >= 14:
+            f = fuente(tam, negrita)
+            lineas, actual = [], ""
+            for p in (texto or "").split():
+                prueba = (actual + " " + p).strip()
+                if _tmp.textlength(prueba, font=f) <= ancho:
+                    actual = prueba
+                else:
+                    if actual:
+                        lineas.append(actual)
+                    actual = p
+            lineas.append(actual or "")
+            if all(_tmp.textlength(l, font=f) <= ancho for l in lineas):
+                return f, lineas
+            tam -= 2
+        return fuente(14, negrita), [texto or ""]
+
+    img = Image.new("RGB", (W, 2600), "white")
     dr = ImageDraw.Draw(img)
-    y = M
 
-    # banda superior morada
+    # ---- banda superior morada ----
     dr.rectangle([0, 0, W, 130], fill=MORADO)
-    y = 34
-    emisor = d.get("emisor_nombre", "")
-    dr.text((M, y), emisor, font=f_titulo, fill="white")
-    y += 52
+    dr.text((M, 26), d.get("emisor_nombre", ""),
+            font=_una(d.get("emisor_nombre", ""), 40, True), fill="white")
     linea_id = " · ".join(x for x in [d.get("emisor_cc", ""), d.get("emisor_telefonos", "")] if x)
     if linea_id:
-        dr.text((M, y), linea_id, font=f_peq, fill=(230, 224, 240))
+        dr.text((M, 86), linea_id, font=_una(linea_id, 18), fill=(230, 224, 240))
     y = 160
+
+    f_h2 = fuente(26, True)
+    f_txt = fuente(22)
+    AL = 30          # alto de línea de texto normal
 
     dr.text((M, y), d.get("titulo", "CUENTA DE COBRO"), font=f_h2, fill=MORADO)
     y += 44
-    dr.text((M, y), d.get("numero", ""), font=f_txt, fill=NEGRO)
-    y += 36
+    ft, lin = _envuelto(d.get("numero", ""), 22)
+    for l in lin:
+        dr.text((M, y), l, font=ft, fill=NEGRO)
+        y += AL
+    y += 10
 
-    dr.text((M, y), "Señor" if False else "Cliente(es):", font=f_txt, fill=GRIS)
+    dr.text((M, y), "Cliente(s):", font=f_txt, fill=GRIS)
     y += 32
     for cli in d.get("clientes", []):
-        dr.text((M + 16, y), cli, font=f_txt, fill=NEGRO)
-        y += 30
+        fc, lin = _envuelto(cli, 22)
+        for l in lin:
+            dr.text((M + 16, y), l, font=fc, fill=NEGRO)
+            y += AL
     y += 10
 
     dr.text((M, y), "Concepto:", font=f_txt, fill=GRIS)
     y += 32
-    for linea in (d.get("concepto", "") or "").split("\n"):
-        dr.text((M + 16, y), linea, font=f_txt, fill=NEGRO)
-        y += 30
+    fc, lin = _envuelto((d.get("concepto", "") or "").replace("\n", " "), 22)
+    for l in lin:
+        dr.text((M + 16, y), l, font=fc, fill=NEGRO)
+        y += AL
     y += 10
 
-    # total destacado
-    dr.rectangle([M, y, W - M, y + 64], fill=(243, 239, 250))
+    # ---- total destacado ----
+    f_tot = _una(str(d.get("total", "")), 26, True, W - 2 * M - 260)
+    dr.rectangle([M, y, W - M, y + 64], fill=LILA)
     dr.text((M + 16, y + 16), "TOTAL A PAGAR:", font=f_h2, fill=MORADO)
-    total = d.get("total", "")
-    w_tot = dr.textlength(str(total), font=f_h2)
-    dr.text((W - M - 16 - w_tot, y + 16), str(total), font=f_h2, fill=MORADO)
+    w_tot = _tmp.textlength(str(d.get("total", "")), font=f_tot)
+    dr.text((W - M - 16 - w_tot, y + 16), str(d.get("total", "")), font=f_tot, fill=MORADO)
     y += 92
 
     banco = (d.get("banco_info", "") or "").strip()
@@ -112,8 +150,13 @@ def _render_con_pillow(cuenta, ruta_png):
         dr.text((M, y), "Se puede consignar o Transferir en:", font=f_txt, fill=GRIS)
         y += 34
         for linea in banco.split("\n"):
-            dr.text((M + 16, y), linea, font=f_txt, fill=NEGRO)
-            y += 30
+            if not linea.strip():
+                y += 12
+                continue
+            fb, lin = _envuelto(linea, 22, False, ANCHO_UT)
+            for l in lin:
+                dr.text((M + 16, y), l, font=fb, fill=NEGRO)
+                y += AL
         y += 8
 
     firma = d.get("firma")
@@ -126,7 +169,8 @@ def _render_con_pillow(cuenta, ruta_png):
             img.paste(fimg, (W - M - ancho_f, y + 10), fimg if fimg.mode == "RGBA" else None)
         except OSError:
             pass
-    dr.text((W - M - 230, y + 104), d.get("emisor_nombre", ""), font=f_peq, fill=GRIS)
+    dr.text((W - M - 300, y + 104), d.get("emisor_nombre", ""),
+            font=_una(d.get("emisor_nombre", ""), 18, False, 300), fill=GRIS)
     y += 140
 
     img = img.crop((0, 0, W, min(y + M, img.height)))

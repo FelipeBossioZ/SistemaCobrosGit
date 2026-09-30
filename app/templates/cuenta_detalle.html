@@ -35,6 +35,9 @@
           title="Guarda el PDF directamente en la carpeta configurada en Parámetros">
       <button class="btn btn-outline-primary btn-sm"><i class="bi bi-download"></i> Descargar a carpeta</button>
     </form>
+    <button class="btn btn-outline-info btn-sm" data-accion="imagen" data-cid="{{ cuenta.id }}"
+            data-numero="{{ cuenta.numero_formateado }}">
+      <i class="bi bi-image"></i> Imagen WhatsApp</button>
     <button class="btn btn-outline-warning btn-sm" data-accion="enviar" data-cid="{{ cuenta.id }}"
             data-numero="{{ cuenta.numero_formateado }}"><i class="bi bi-send"></i> Registrar envío</button>
     <button class="btn btn-outline-success btn-sm" data-accion="pago" data-cid="{{ cuenta.id }}"

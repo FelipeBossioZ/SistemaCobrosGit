@@ -62,3 +62,26 @@ def ejecutar(db):
         if "renta_base" not in cols:
             con.execute(text("ALTER TABLE clientes ADD COLUMN renta_base FLOAT"))
         con.commit()
+        # Tarifario: estratos de renta por patrimonio neto (guia editable)
+        con.execute(text("""CREATE TABLE IF NOT EXISTS estratos_tarifa (
+            id INTEGER PRIMARY KEY,
+            orden INTEGER NOT NULL,
+            nombre VARCHAR(60) NOT NULL,
+            pat_min FLOAT,
+            pat_max FLOAT,
+            valor FLOAT,
+            factor FLOAT,
+            activo BOOLEAN DEFAULT 1
+        )"""))
+        _n = con.execute(text("SELECT COUNT(*) FROM estratos_tarifa")).scalar() or 0
+        if not _n:
+            con.execute(text("""INSERT INTO estratos_tarifa
+                (orden, nombre, pat_min, pat_max, valor, factor, activo) VALUES
+                (1, 'Minima Especial (0-100M)', 0, 100000000, NULL, NULL, 1),
+                (2, 'Basica (100-300M)', 100000000, 300000000, 350000, 1.0, 1),
+                (3, '300M - 500M', 300000000, 500000000, 395000, 1.13, 1),
+                (4, '500M - 1.000M', 500000000, 1000000000, 670000, 1.92, 1),
+                (5, '1.000M - 2.000M', 1000000000, 2000000000, 1005000, 2.88, 1),
+                (6, '2.000M - 3.000M', 2000000000, 3000000000, 1355000, 3.88, 1),
+                (7, 'Mas de 3.000M', 3000000000, NULL, 1960000, 5.6, 1)"""))
+        con.commit()

@@ -432,3 +432,21 @@ class Tarea(db.Model):
     hecha = db.Column(db.Boolean, default=False, index=True)
 
     cliente = db.relationship("Cliente", backref="tareas")
+
+
+class EstratoTarifa(db.Model):
+    """Tarifario: renta sugerida por patrimonio neto. Es una GUIA, no obliga.
+    orden 1 = Minima Especial (0-100M): valor NULL -> espeja anios.valor_minima.
+    orden 2 = Basica (100-300M): factor 1.0, valor sigue a anios.valor_minima_primera.
+    orden 3+: valor = piso5k(Basica * factor). Se re-escala sola cuando cambia
+    la Basica en Parametros o cuando un ano nuevo aplica el IPC."""
+    __tablename__ = "estratos_tarifa"
+
+    id = db.Column(db.Integer, primary_key=True)
+    orden = db.Column(db.Integer, nullable=False, default=0)
+    nombre = db.Column(db.String(60), nullable=False, default="")
+    pat_min = db.Column(db.Float)
+    pat_max = db.Column(db.Float)            # None = sin techo
+    valor = db.Column(db.Float)              # None = espeja la Minima Especial
+    factor = db.Column(db.Float)             # None = no escala con la Basica
+    activo = db.Column(db.Boolean, default=True)

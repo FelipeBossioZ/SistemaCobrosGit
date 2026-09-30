@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% block title %}Tarifario{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+  <h3 class="mb-0"><i class="bi bi-lightning-charge"></i> Tarifario</h3>
+  <div class="no-print">
+    <button class="btn btn-outline-primary btn-sm" onclick="window.print()"><i class="bi bi-printer"></i> Imprimir / PDF</button>
+    <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.asesorias') }}">Editar catálogo</a>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header bg-white fw-semibold d-flex justify-content-between flex-wrap gap-1">
+    <span>Renta sugerida por patrimonio neto</span>
+    <span class="text-muted small fw-normal">Guía editable — no obliga. Valores redondeados hacia abajo (múltiplos de 5.000).</span>
+  </div>
+  <div class="card-body">
+    <p class="small text-muted d-print-none">
+      La <strong>Mínima Especial</strong> (0–100M) y la <strong>Básica</strong> (100–300M) se editan en
+      <a href="{{ url_for('main.parametros') }}">Parámetros</a>: al cambiar la Básica, los demás rangos
+      se re-escalan solos según su factor. Los años nuevos aplican el IPC a toda la tabla.
+    </p>
+    <div class="table-responsive">
+    <table class="table table-sm table-bordered align-middle" id="ttarif">
+      <thead class="table-light"><tr>
+        <th style="width:26%">Nombre</th>
+        <th>Patrimonio desde (M)</th>
+        <th>Hasta (M)</th>
+        <th style="width:16%">Factor × Básica</th>
+        <th class="num" style="width:14%">Renta sugerida</th>
+        <th class="d-print-none" style="width:44px"></th>
+      </tr></thead>
+      <tbody id="filas">
+      {% for e in estratos %}
+        {% set espejo_esp = (e.valor is none) %}
+        {% set espejo_bas = ((e.factor or 0) == 1.0) %}
+        {% set v = basica if espejo_bas else (especial if espejo_esp else (e.valor or 0)) %}
+        <tr data-id="{{ e.id }}" {% if espejo_esp or espejo_bas %}data-espejo="{{ 'esp' if espejo_esp else 'bas' }}"{% endif %}>
+          <td><input class="form-control form-control-sm t-nombre" value="{{ e.nombre }}"></td>
+          <td><input class="form-control form-control-sm t-pmin" type="number" step="1" value="{{ ((e.pat_min or 0) / 1000000)|int }}"></td>
+          <td><input class="form-control form-control-sm t-pmax" type="number" step="1" value="{{ '' if e.pat_max is none else (e.pat_max / 1000000)|int }}" placeholder="sin techo"></td>
+          <td>{% if espejo_esp %}
+              <input class="form-control form-control-sm t-factor" value="" disabled placeholder="—">
+              <div class="small text-muted">← Parámetros (Mínima Especial)</div>
+              {% elif espejo_bas %}
+              <input class="form-control form-control-sm t-factor" value="1.0" disabled>
+              <div class="small text-muted">← Parámetros (Básica)</div>
+              {% else %}
+              <input class="form-control form-control-sm t-factor" type="number" step="0.01" value="{{ e.factor }}">
+              {% endif %}</td>
+          <td class="num fw-semibold t-valor" data-valor="{{ v|int }}">{{ v|money }}</td>
+          <td class="d-print-none text-center"><button class="btn btn-sm btn-outline-danger t-quitar" title="Quitar fila"><i class="bi bi-x"></i></button></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <div class="d-print-none">
+      <button class="btn btn-sm btn-outline-primary" id="agregar"><i class="bi bi-plus-lg"></i> Agregar rango</button>
+      <button class="btn btn-sm btn-primary" id="guardar"><i class="bi bi-save"></i> Guardar tarifario</button>
+      <span id="msg" class="small text-muted ms-2"></span>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header bg-white fw-semibold">Catálogo estándar de servicios <span class="text-muted small fw-normal">(solo lectura — se edita en Asesorías)</span></div>
+  <div class="card-body">
+    <div class="table-responsive">
+    <table class="table table-sm table-bordered mb-0">
+      <thead class="table-light"><tr><th>Servicio</th><th class="num" style="width:22%">Tarifa estándar</th><th style="width:30%">Base</th></tr></thead>
+      <tbody>
+      {% for it in catalogo %}
+        <tr>
+          <td>{{ it.nombre }}</td>
+          {% if it.es_fija %}
+          <td class="num">{% if it.defecto_valor %}{{ it.defecto_valor|money }}{% if it.codigo in ('CONT_PN', 'CONT_PJ_B', 'CONT_PJ_C') %} / mes{% endif %}{% else %}valor libre{% endif %}</td>
+          {% else %}
+          <td class="num">{{ "%g"|format(it.defecto_pct or 0) }}% de la base</td>
+          {% endif %}
+          <td class="small text-muted">{{ it.base_min or "—" }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<span id="tarifario-basica" class="d-none">{{ basica|int }}</span>
+<script>
+(function () {
+  function piso5k(x) { return Math.floor(x / 5000) * 5000; }
+  function filas() { return Array.prototype.slice.call(document.querySelectorAll("#filas tr")); }
+  function recalc() {
+    var b = parseFloat(document.getElementById("tarifario-basica").textContent) || 0;
+    filas().forEach(function (tr) {
+      if (tr.dataset.espejo) return;
+      var f = parseFloat(tr.querySelector(".t-factor").value) || 0;
+      var v = (f > 0) ? piso5k(b * f) : 0;
+      var celda = tr.querySelector(".t-valor");
+      celda.textContent = "$ " + v.toLocaleString("es-CO");
+      celda.dataset.valor = v;
+    });
+  }
+  document.getElementById("agregar").addEventListener("click", function () {
+    var tr = document.createElement("tr");
+    tr.innerHTML =
+      '<td><input class="form-control form-control-sm t-nombre" value="Nuevo rango"></td>' +
+      '<td><input class="form-control form-control-sm t-pmin" type="number" value="0"></td>' +
+      '<td><input class="form-control form-control-sm t-pmax" type="number" placeholder="sin techo"></td>' +
+      '<td><input class="form-control form-control-sm t-factor" type="number" step="0.01" value="1.5"></td>' +
+      '<td class="num fw-semibold t-valor" data-valor="0">—</td>' +
+      '<td class="d-print-none text-center"><button class="btn btn-sm btn-outline-danger t-quitar"><i class="bi bi-x"></i></button></td>';
+    document.getElementById("filas").appendChild(tr);
+    recalc();
+  });
+  document.addEventListener("click", function (ev) {
+    var q = ev.target.closest(".t-quitar");
+    if (q) q.closest("tr").remove();
+  });
+  document.addEventListener("input", function (ev) {
+    if (ev.target.classList && ev.target.classList.contains("t-factor")) recalc();
+  });
+  document.getElementById("guardar").addEventListener("click", function () {
+    var datos = filas().map(function (tr) {
+      function val(c) { var el = tr.querySelector(c); return el ? el.value.trim() : ""; }
+      var espejo = tr.dataset.espejo || "";
+      return {
+        nombre: val(".t-nombre"),
+        pat_min: val(".t-pmin"),
+        pat_max: val(".t-pmax"),
+        factor: (espejo === "esp") ? null : val(".t-factor"),
+        valor: (espejo === "esp") ? null : tr.querySelector(".t-valor").dataset.valor
+      };
+    });
+    var fd = new FormData();
+    fd.append("acc", "guardar");
+    fd.append("filas", JSON.stringify(datos));
+    var btn = this, msg = document.getElementById("msg");
+    btn.disabled = true; msg.textContent = "Guardando...";
+    fetch(location.pathname, { method: "POST", body: fd })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (j.ok) { msg.textContent = "Guardado ✓"; setTimeout(function () { location.reload(); }, 350); }
+        else { btn.disabled = false; msg.textContent = j.error || "No pude guardar"; }
+      })
+      .catch(function () { btn.disabled = false; msg.textContent = "No pude guardar"; });
+  });
+  recalc();
+})();
+</script>
+<style>
+  @media print {
+    .navbar, .no-print, .d-print-none, .alert { display: none !important; }
+    body { background: #fff; }
+    .card { box-shadow: none; border: 1px solid #ddd; break-inside: avoid; }
+    .container-fluid { max-width: 100% !important; padding: 0 !important; }
+    input, .btn { display: none !important; }
+  }
+</style>
+{% endblock %}

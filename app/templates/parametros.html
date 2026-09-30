@@ -2,6 +2,7 @@
 {% block title %}Parámetros{% endblock %}
 {% block content %}
 <h3 class="mb-3">Parámetros</h3>
+<p class="small"><a href="{{ url_for('main.tarifario') }}"><i class="bi bi-lightning-charge"></i> Tarifario (renta por patrimonio, editable e imprimible)</a></p>
 <p class="small"><a href="{{ url_for('main.asesorias') }}"><i class="bi bi-list-check"></i> Catálogo de asesorías (porcentajes y tarifas estándar)</a></p>
 <form id="fparams" method="post" class="row g-4">
   <div class="col-lg-6">
@@ -23,11 +24,11 @@
             <input class="form-control" type="number" step="0.001" name="ipc" value="{{ a.ipc }}">
           </div>
           <div class="col-4">
-            <label class="form-label">Mínima Mvto</label>
+            <label class="form-label">Mínima Especial (patrimonio 0–100M)</label>
             <input class="form-control" type="number" step="1000" name="valor_minima" value="{{ a.valor_minima|int }}">
           </div>
           <div class="col-4">
-            <label class="form-label">Mínima 1ª vez</label>
+            <label class="form-label">Básica 100–300M (base del tarifario)</label>
             <input class="form-control" type="number" step="1000" name="valor_minima_primera" value="{{ a.valor_minima_primera|int }}">
           </div>
           <div class="col-12">

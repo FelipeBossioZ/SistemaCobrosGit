@@ -43,7 +43,17 @@
   a:hover { color: var(--morado-osc); }
   .text-primary { color: var(--morado) !important; }
   .bg-primary { background-color: var(--morado) !important; }
-  .navbar { background: linear-gradient(90deg, #2e1065 0%, #4c1d95 55%, #5b21b6 100%); }
+  .navbar {
+    background: linear-gradient(90deg, #2e1065 0%, #4c1d95 55%, #5b21b6 100%);
+    position: sticky; top: 0; z-index: 1030;
+    padding-top: .4rem; padding-bottom: .4rem;
+    transition: padding .18s ease, box-shadow .18s ease;
+  }
+  .navbar.nav-delgada { padding-top: .12rem; padding-bottom: .12rem; box-shadow: 0 2px 10px rgba(0,0,0,.25); }
+  .navbar.nav-delgada .navbar-brand { font-size: .95rem; }
+  .navbar.nav-delgada .nav-link { font-size: .84rem; padding: .22rem .5rem; }
+  .navbar.nav-delgada .navbar-text { font-size: .78rem; }
+  .navbar-brand { font-weight: 700; }
   .nav-link.active { color: #fff !important; font-weight: 600; }
   .navbar-text { color: #ddd6fe !important; }
   .form-control:focus, .form-select:focus {
@@ -76,6 +86,11 @@
         <li class="nav-item"><a class="nav-link" href="{{ url_for('main.grupos') }}">Grupos Familiares</a></li>
         <li class="nav-item"><a class="nav-link" href="{{ url_for('main.parametros') }}">Parámetros</a></li>
         <li class="nav-item"><a class="nav-link" href="{{ url_for('main.anios') }}">Años</a></li>
+        <li class="nav-item ms-lg-2">
+          <button class="btn btn-sm btn-outline-light" data-bs-toggle="modal" data-bs-target="#mTarifario"
+                  title="Consulta rápida de tarifas y renta por patrimonio">
+            <i class="bi bi-lightning-charge"></i> Tarifario</button>
+        </li>
       </ul>
       {% if a is defined and a %}
       <span class="navbar-text fw-bold">Año de cobro {{ a.anio_cobro }} · gravable {{ a.anio_gravable }} · prefijo {{ a.prefijo }}</span>
@@ -518,6 +533,78 @@ document.addEventListener("click", e => {
   new bootstrap.Modal(modal).show();
 });
 </script>
+{% if estratos_tarifa %}
+<div class="modal fade" id="mTarifario" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h5 class="modal-title"><i class="bi bi-lightning-charge"></i> Tarifario</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="small text-muted mb-2">Solo consulta. Para editar: Parámetros → Tarifario.
+        Escribe una base de renta para ver cuánto quedan los servicios en %.</p>
+        <div class="input-group input-group-sm mb-2" style="max-width: 380px;">
+          <span class="input-group-text">Base de renta</span>
+          <input type="number" id="tbase" class="form-control" min="0" step="50000" placeholder="Ej: 450000">
+        </div>
+        <div class="table-responsive">
+        <table class="table table-sm table-bordered mb-3 small">
+          <thead class="table-light"><tr><th>Servicio</th><th class="num">Tarifa</th><th class="num">Base renta</th><th class="num">Cuánto queda</th></tr></thead>
+          <tbody>
+            {% for it in catalogo_tarifa %}
+            <tr data-pct="{{ it.defecto_pct or 0 }}" data-fija="{{ 1 if it.es_fija else 0 }}">
+              <td>{{ it.nombre }}{% if it.base_min %} <span class="text-muted">({{ it.base_min }})</span>{% endif %}</td>
+              {% if it.es_fija %}
+              <td class="num" colspan="3">{% if it.defecto_valor %}{{ it.defecto_valor|money }}{% else %}valor libre{% endif %}</td>
+              {% else %}
+              <td class="num">{{ "%g"|format(it.defecto_pct or 0) }}%</td>
+              <td class="num tb-base">—</td>
+              <td class="num tb-sub">—</td>
+              {% endif %}
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        </div>
+        <h6 class="mb-1">Renta sugerida por patrimonio neto</h6>
+        <div class="table-responsive">
+        <table class="table table-sm table-bordered mb-0 small">
+          <thead class="table-light"><tr><th>Patrimonio neto</th><th class="num">Renta sugerida</th></tr></thead>
+          <tbody>
+            {% for e in estratos_tarifa if e.activo %}
+            {% set v = e.valor if e.valor is not none else (a.valor_minima if (a is defined and a) else 0) %}
+            <tr><td>{{ e.nombre }}</td><td class="num">{{ (v or 0)|money }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+(function () {
+  var inp = document.getElementById("tbase");
+  if (inp) inp.addEventListener("input", function () {
+    var b = parseFloat(inp.value) || 0;
+    document.querySelectorAll("#mTarifario tr[data-pct]").forEach(function (tr) {
+      if (tr.dataset.fija === "1") return;
+      var pct = parseFloat(tr.dataset.pct) || 0;
+      var sub = (b > 0 && pct > 0) ? Math.round(pct / 100 * b) : 0;
+      tr.querySelector(".tb-base").textContent = b > 0 ? b.toLocaleString("es-CO") : "—";
+      tr.querySelector(".tb-sub").textContent = sub > 0 ? "$ " + sub.toLocaleString("es-CO") : "—";
+    });
+  });
+  var nav = document.querySelector("nav.navbar");
+  if (nav) {
+    var onS = function () { nav.classList.toggle("nav-delgada", window.scrollY > 8); };
+    window.addEventListener("scroll", onS, { passive: true });
+    onS();
+  }
+})();
+</script>
+{% endif %}
 {% block scripts %}{% endblock %}
 </body>
 </html>

@@ -101,7 +101,7 @@
       <div class="card-body small">
         <div>Concepto: <strong>{{ a.concepto_texto }}</strong></div>
         <div>IPC parametrizado: <strong>{{ "%.1f"|format(a.ipc*100) }}%</strong></div>
-        <div>Mínima Mvto: <strong>{{ (a.valor_minima)|money }}</strong> · Mínima 1ª vez: <strong>{{ (a.valor_minima_primera)|money }}</strong></div>
+        <div>Mínima Especial (patrimonio 0–100M): <strong>{{ (a.valor_minima)|money }}</strong> · Básica (100–300M, base del tarifario): <strong>{{ (a.valor_minima_primera)|money }}</strong></div>
         <div>Próximo número de cuenta: <strong>{{ a.prefijo }}-{{ "%03d"|format(a.numero_siguiente) }}</strong></div>
         <a class="btn btn-outline-primary btn-sm mt-2" href="{{ url_for('main.importar') }}"><i class="bi bi-file-earmark-arrow-up"></i> Importar Excel</a>
       </div>

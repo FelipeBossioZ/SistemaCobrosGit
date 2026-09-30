@@ -2889,7 +2889,15 @@ def parametros():
             if "valor_minima" in f:
                 a.valor_minima = float(f.get("valor_minima") or 0)
             if "valor_minima_primera" in f:
+                _basica_antes = float(a.valor_minima_primera or 0)
                 a.valor_minima_primera = float(f.get("valor_minima_primera") or 0)
+                # Tarifario: si cambia la Basica, los rangos 2+ siguen su factor
+                if _basica_antes > 0 and a.valor_minima_primera > 0 and abs(a.valor_minima_primera - _basica_antes) > 0.5:
+                    from .models import EstratoTarifa
+                    for _e in (EstratoTarifa.query.filter(EstratoTarifa.factor.isnot(None),
+                                                          EstratoTarifa.orden >= 2)
+                               .all()):
+                        _e.valor = piso_5000(a.valor_minima_primera * _e.factor)
             if "concepto" in f:
                 a.concepto = f.get("concepto", "")
         db.session.commit()
@@ -2973,6 +2981,75 @@ def parametros_ubicacion():
     return redirect(url_for("main.parametros"))
 
 
+def piso_5000(x):
+    """Redondeo a la BAJA a multiplos de 5.000 (a favor del cliente)."""
+    import math
+    return int(math.floor(float(x or 0) / 5000.0)) * 5000
+
+
+@bp.app_context_processor
+def _inyectar_tarifario():
+    """Tarifario en TODAS las paginas (modal del navbar). Consulta, no edita."""
+    try:
+        from .models import AsesoriaCatalogo, EstratoTarifa
+        return {
+            "estratos_tarifa": EstratoTarifa.query.order_by(EstratoTarifa.orden).all(),
+            "catalogo_tarifa": (AsesoriaCatalogo.query.filter_by(activo=True)
+                                .order_by(AsesoriaCatalogo.orden, AsesoriaCatalogo.id).all()),
+        }
+    except Exception:
+        return {"estratos_tarifa": [], "catalogo_tarifa": []}
+
+
+@bp.route("/tarifario", methods=["GET", "POST"])
+def tarifario():
+    """Tarifario completo: renta por patrimonio (editable) + catalogo (lectura)."""
+    from .models import AsesoriaCatalogo, EstratoTarifa
+    if request.method == "POST":
+        from flask import jsonify
+        if request.form.get("acc") == "guardar":
+            import json as _json
+            try:
+                datos = _json.loads(request.form.get("filas") or "[]")
+            except ValueError:
+                datos = []
+            if not isinstance(datos, list) or not datos:
+                return jsonify(ok=False, error="No recibí filas válidas")
+
+            def _f(x):
+                try:
+                    return float(x)
+                except (TypeError, ValueError):
+                    return None
+
+            EstratoTarifa.query.delete()
+            orden = 0
+            for d in datos:
+                if not isinstance(d, dict):
+                    continue
+                orden += 1
+                pmin, pmax = _f(d.get("pat_min")), _f(d.get("pat_max"))
+                factor, valor = _f(d.get("factor")), _f(d.get("valor"))
+                db.session.add(EstratoTarifa(
+                    orden=orden,
+                    nombre=(d.get("nombre") or f"Estrato {orden}").strip()[:60],
+                    pat_min=(pmin * 1000000.0 if pmin is not None else None),
+                    pat_max=(pmax * 1000000.0 if pmax not in (None, "") else None),
+                    valor=(piso_5000(valor) if valor is not None else None),
+                    factor=(factor if (factor is not None and factor > 0) else None),
+                    activo=True))
+            db.session.commit()
+            return jsonify(ok=True)
+        return redirect(url_for("main.tarifario"))
+    es = EstratoTarifa.query.order_by(EstratoTarifa.orden).all()
+    cat = (AsesoriaCatalogo.query.filter_by(activo=True)
+           .order_by(AsesoriaCatalogo.orden, AsesoriaCatalogo.id).all())
+    a = anio_actual()
+    return render_template("tarifario.html", estratos=es, catalogo=cat, a=a,
+                           especial=(float(a.valor_minima or 0) if a else 0.0),
+                           basica=(float(a.valor_minima_primera or 0) if a else 0.0))
+
+
 @bp.route("/anios")
 def anios():
     return render_template("anios.html",
@@ -3002,6 +3079,12 @@ def anio_nuevo():
         numero_siguiente=1, consecutivo_inicial=1, activo=False,
     )
     db.session.add(nuevo)
+    # Tarifario: los estratos escalan con el IPC del nuevo año (a la baja, múltiplos de 5.000)
+    if ipc:
+        from .models import EstratoTarifa
+        for _e in EstratoTarifa.query.filter(EstratoTarifa.valor.isnot(None)).all():
+            _e.valor = piso_5000(_e.valor * (1.0 + ipc))
+        db.session.commit()
     # arrastre: presupuesto nuevo = valor de la última cuenta emitida (o presupuesto si nunca se emitió)
     if anterior:
         for cli in Cliente.query.filter_by(activo=True):

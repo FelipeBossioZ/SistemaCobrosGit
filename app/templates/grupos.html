@@ -30,6 +30,12 @@ puedes tener subgrupos: simplemente crea otro grupo con los miembros que quieras
           {% if faltan %}<span class="badge bg-warning text-dark"
               title="Faltan declaraciones de: {{ faltan|map(attribute='nombre')|join(', ') }}">sin cobrar</span>
           {% else %}<span class="badge bg-success" title="Todos con renta presentada o no obligados">al día · cobrable</span>{% endif %}
+          {% set ns = namespace(con_cuenta=0, pagaron=0) %}
+          {% for cli in g.miembros %}{% set p = pagos_map.get(cli.id) %}{% if p %}
+            {% set ns.con_cuenta = ns.con_cuenta + 1 %}{% if p.estado == 'pagado' %}{% set ns.pagaron = ns.pagaron + 1 %}{% endif %}
+          {% endif %}{% endfor %}
+          {% if ns.con_cuenta %}<span class="badge {% if ns.pagaron == ns.con_cuenta %}bg-success{% else %}bg-light text-dark{% endif %}"
+              title="Miembros con cuenta este año: {{ ns.con_cuenta }} · pagaron: {{ ns.pagaron }}">pagaron {{ ns.pagaron }}/{{ ns.con_cuenta }}</span>{% endif %}
         </strong>
         <div class="d-flex gap-2 align-items-center">
           {% if g.pagador %}
@@ -53,6 +59,14 @@ puedes tener subgrupos: simplemente crea otro grupo con los miembros que quieras
               <a href="{{ url_for('main.cliente_detalle', cid=cli.id) }}">{{ cli.nombre }}</a>
               {% if cli.es_pagador %}<span class="badge bg-info text-dark">pagador · sale a su nombre</span>{% endif %}
               {% if not cli.decl_ok %}<span class="badge bg-warning text-dark">falta renta</span>{% endif %}
+              {% set p = pagos_map.get(cli.id) %}
+              {% if p and p.estado == 'pagado' %}
+              <span class="badge bg-success" title="Su parte en las cuentas de este año: {{ p.pagado|money }} de {{ p.debe|money }}"><i class="bi bi-check-circle-fill"></i> pagó</span>
+              {% elif p and p.estado == 'abono' %}
+              <span class="badge bg-warning text-dark" title="Pagos imputados a su parte este año (prorrateados entre los miembros de cada cuenta)">abonó {{ p.pagado|money }} de {{ p.debe|money }}</span>
+              {% elif p %}
+              <span class="badge bg-secondary" title="Sin pagos en las cuentas donde aparece este año">debe {{ p.debe|money }}</span>
+              {% endif %}
             </td>
             <td class="text-end" style="width: 240px;">
               {% if not cli.es_pagador %}

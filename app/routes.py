@@ -1425,9 +1425,51 @@ def cliente_editar(cid):
 
 
 # ---------------- Grupos familiares ----------------
+def _pagos_miembros_anio():
+    """Estado de pago individual (año activo) para la vista de grupos familiares.
+
+    Devuelve {cliente_id: {"estado": "pagado"|"abono"|"pendiente", "pagado": x, "debe": y}}
+    solo de quienes aparecen en alguna cuenta NO anulada del año. El dinero pagado a
+    una cuenta se reparte proporcionalmente entre sus líneas (valor línea / total);
+    los ajustes también se prorratean así. Cuenta PAGADA o saldo 0 => cada línea
+    cubre su parte completa. Exceso de pago se limita a la parte del miembro."""
+    a = AnioCobro.query.filter_by(activo=True).first()
+    if not a:
+        return {}
+    acc = {}
+    cuentas = (CuentaCobro.query.filter_by(anio_cobro_id=a.id)
+               .filter(CuentaCobro.estado != "ANULADA").all())
+    for cu in cuentas:
+        lineas = [l for l in cu.lineas if l.estado == "ACTIVA"]
+        tot = sum(float(l.valor or 0) for l in lineas)
+        if tot <= 0:
+            continue
+        pagado = float(cu.total_pagado or 0)
+        ajustes = float(cu.total_ajustes or 0)
+        for l in lineas:
+            fr = float(l.valor or 0) / tot
+            parte = max(float(l.valor or 0) - ajustes * fr, 0.0)
+            pag = min(pagado * fr, parte)
+            d = acc.setdefault(l.cliente_id, {"pagado": 0.0, "debe": 0.0})
+            d["debe"] += parte
+            d["pagado"] += pag
+    res = {}
+    for cid, d in acc.items():
+        debe, pag = d["debe"], d["pagado"]
+        if pag >= debe - 0.5:
+            est = "pagado"
+        elif pag > 0.5:
+            est = "abono"
+        else:
+            est = "pendiente"
+        res[cid] = {"estado": est, "pagado": pag, "debe": debe}
+    return res
+
+
 @bp.route("/grupos")
 def grupos():
     return render_template("grupos.html",
+                           pagos_map=_pagos_miembros_anio(),
                            grupos=GrupoFamiliar.query.order_by(GrupoFamiliar.nombre).all(),
                            clientes_sin_grupo=Cliente.query.filter_by(grupo_id=None, activo=True)
                            .order_by(Cliente.nombre).all())

@@ -298,6 +298,40 @@ def clientes():
             for l in ls:
                 pagado_actual[l.cliente_id] = pagado_actual.get(l.cliente_id, 0.0) \
                     + pago.valor * (l.valor / tot)
+    # resumen año anterior HÍBRIDO por cliente (ficha, listado y preliminar
+    # hablan igual): si hay cuentas del año anterior se calcula desde ellas;
+    # si no, el listado muestra los campos manuales tal cual.
+    cob_ant_h, pag_ant_h = {}, {}
+    if a:
+        anterior = (AnioCobro.query.filter(AnioCobro.anio_cobro < a.anio_cobro)
+                    .order_by(AnioCobro.anio_cobro.desc()).first())
+        if anterior:
+            c_ids_a = {c.id: c for c in CuentaCobro.query
+                       .filter_by(anio_cobro_id=anterior.id)
+                       .filter(CuentaCobro.estado != "ANULADA").all()}
+            lin_cta = {}
+            for l in CuentaLinea.query.filter_by(estado="ACTIVA").all():
+                if l.cuenta_id in c_ids_a:
+                    lin_cta.setdefault(l.cuenta_id, []).append(l)
+            cob_tmp, pag_tmp = {}, {}
+            for cu_id, ls in lin_cta.items():
+                cu = c_ids_a[cu_id]
+                tot = sum(float(l.valor or 0) for l in ls)
+                if tot <= 0:
+                    continue
+                neto = max(tot - float(cu.total_ajustes or 0), 0.0)
+                real = min(float(cu.total_pagado or 0), neto)
+                for l in ls:
+                    f = float(l.valor or 0) / tot
+                    cob_tmp[l.cliente_id] = cob_tmp.get(l.cliente_id, 0.0) + neto * f
+                    pag_tmp[l.cliente_id] = pag_tmp.get(l.cliente_id, 0.0) + real * f
+            for cli in lista:
+                ids_m = ([m.id for m in cli.grupo.miembros if m.activo]
+                         if cli.es_pagador and cli.grupo_id else [cli.id])
+                if any(i in cob_tmp for i in ids_m):
+                    cob_ant_h[cli.id] = sum(cob_tmp.get(i, 0.0) for i in ids_m)
+                    pag_ant_h[cli.id] = sum(pag_tmp.get(i, 0.0) for i in ids_m)
+
     # correos (.eml) por cliente: los .eml se nombran SLUG-DEL-PAGADOR_CdeC_...,
     # así que un cliente tiene correo si SU slug (o el de un grupo donde es pagador) está
     n_correos = {}
@@ -335,6 +369,7 @@ def clientes():
     return render_template("clientes.html", clientes=lista, ver=ver,
                            presup=presup, a=a, correos=correos,
                            estados_cobro=estados_cobro, pagado_actual=pagado_actual,
+                           cob_ant_h=cob_ant_h, pag_ant_h=pag_ant_h,
                            maestro_check=maestro_check, previo_audit=previo_audit,
                            previo_sin_emitir=previo_sin_emitir,
                            grupos=GrupoFamiliar.query.order_by(GrupoFamiliar.nombre))
@@ -715,23 +750,31 @@ def clientes_sync_maestro():
     return redirect(request.referrer or url_for("main.clientes"))
 
 
-def _cobrado_pagado_anterior(a, ids_cli):
-    """(cobrado, pagado, anio) del año inmediatamente anterior para los clientes
-    ids_cli: suma de sus lineas activas menos ajustes prorrateados, y lo
-    efectivamente pagado (limitado a lo cobrado). Solo cuentas no anuladas."""
+def _cobrado_pagado_anterior(a, clientes):
+    """(cobrado, pagado, anio) del año inmediatamente anterior, HÍBRIDO:
+    si el sistema ya tiene cuentas del año anterior para esos clientes, calcula
+    desde las cuentas (líneas activas menos ajustes prorrateados; pagos reales
+    limitados a lo cobrado). Si no hay ninguna, usa los campos manuales del
+    listado (cobrado_anterior / cobrado_anterior_real): historia previa al sistema."""
     anterior = (AnioCobro.query.filter(AnioCobro.anio_cobro < a.anio_cobro)
                 .order_by(AnioCobro.anio_cobro.desc()).first())
     cob = pag = 0.0
-    if anterior and ids_cli:
+    ids = {c.id for c in clientes}
+    tiene = False
+    if anterior and ids:
         for cu in (CuentaCobro.query.filter_by(anio_cobro_id=anterior.id)
                    .filter(CuentaCobro.estado != "ANULADA").all()):
-            ls = [l for l in cu.lineas if l.estado == "ACTIVA" and l.cliente_id in ids_cli]
+            ls = [l for l in cu.lineas if l.estado == "ACTIVA" and l.cliente_id in ids]
             if not ls:
                 continue
+            tiene = True
             tot = sum(float(l.valor or 0) for l in ls)
             aj = float(cu.total_ajustes or 0)
             cob += max(tot - aj, 0.0)
             pag += min(float(cu.total_pagado or 0), max(tot - aj, 0.0))
+    if not tiene:
+        cob = sum(float(c.cobrado_anterior or 0) for c in clientes)
+        pag = sum(float(c.cobrado_anterior_real or 0) for c in clientes)
     anio = anterior.anio_cobro if anterior else None
     return cob, pag, anio
 
@@ -1051,11 +1094,9 @@ def cliente_detalle(cid):
                    "base_min": (fx["it"].base_min or ""),
                    "en_maestro": bool(fx["en_maestro"])} for fx in filas_asesorias],
     }
-    if cli.es_pagador and cli.grupo_id:
-        ids_ant = [m.id for m in cli.grupo.miembros if m.activo]
-    else:
-        ids_ant = [cli.id]
-    cob_ant, pag_ant, anio_ant = (_cobrado_pagado_anterior(a, ids_ant) if a
+    objs_ant = ([m for m in cli.grupo.miembros if m.activo]
+                if cli.es_pagador and cli.grupo_id else [cli])
+    cob_ant, pag_ant, anio_ant = (_cobrado_pagado_anterior(a, objs_ant) if a
                                   else (0.0, 0.0, None))
     return render_template("cliente_detalle.html", cli=cli, presup=presup,
                            resumen_ant={"cobrado": cob_ant, "pagado": pag_ant,

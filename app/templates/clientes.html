@@ -105,7 +105,12 @@
         </td>
         <td class="num">{% set p = presup.get(cli.id) %}{% if p %}{{ (p.valor)|money }}{% endif %}</td>
         <td class="num text-success">{% set pg = pagado_actual.get(cli.id) %}{% if pg %}{{ pg|money }}{% else %}·{% endif %}</td>
-        <td class="num text-muted">{% if cli.cobrado_anterior %}{{ cli.cobrado_anterior|money }}{% else %}·{% endif %}</td>
+        {% set ca = cob_ant_h.get(cli.id) %}
+        <td class="num text-muted" {% if ca is not none %}title="De la cuenta de cobro {{ (a.anio_cobro|int - 1) if a }} registrada en el sistema"{% else %}title="Dato manual (el sistema no tiene cuenta de {{ (a.anio_cobro|int - 1) if a }})"{% endif %}>{% if ca is not none %}{{ ca|money }}{% elif cli.cobrado_anterior %}{{ cli.cobrado_anterior|money }}{% else %}·{% endif %}</td>
+        {% set pa = pag_ant_h.get(cli.id) %}
+        {% if pa is not none %}
+        <td class="num" title="Calculado por el sistema: pagos reales de la cuenta {{ (a.anio_cobro|int - 1) if a }}">{{ pa|money }}</td>
+        {% else %}
         <td class="num">
           <form class="d-inline" method="post" action="{{ url_for('main.cliente_cobrado_anterior', cid=cli.id) }}">
             <input class="form-control form-control-sm text-end cobant-input d-none" name="valor" type="number" step="1000" min="0"
@@ -114,6 +119,7 @@
                   title="Clic para editar: lo realmente pagado {{ (a.anio_cobro|int - 1) if a }}">{{ cli.cobrado_anterior_real|money if cli.cobrado_anterior_real else '·' }}</span>
           </form>
         </td>
+        {% endif %}
         <td class="text-end">
           <div class="d-flex gap-1 justify-content-end">
             {% if ver != 'inactivos' %}

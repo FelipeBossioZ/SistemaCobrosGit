@@ -14,8 +14,9 @@ puedes tener subgrupos: simplemente crea otro grupo con los miembros que quieras
 <div id="sinResultados" class="alert alert-light border d-none small text-muted">
   Ninguna familia coincide con la búsqueda.</div>
 <style>
-  .grupo-ok { background: #e7f4ea; border-color: #bfe4c8; }
-  .grupo-parcial { background: #fcecef; border-color: #f3cdd4; }
+  /* color SOLO en la franja del titulo; la tarjeta queda blanca */
+  .franja-rosa { background: #FCECEF; }
+  .franja-limon { background: #FCF8DC; }
 </style>
 
 <div class="row g-4">
@@ -27,8 +28,8 @@ puedes tener subgrupos: simplemente crea otro grupo con los miembros que quieras
 
     {% for g in grupos %}
     {% set est = estado_grupos.get(g.id) %}
-    <div class="card mb-3 {% if est == 'ok' %}grupo-ok{% elif est == 'parcial' %}grupo-parcial{% endif %}">
-      <div class="card-header bg-white d-flex justify-content-between align-items-center">
+    <div class="card mb-3">
+      <div class="card-header {% if est == 'ok' %}franja-limon{% elif est == 'parcial' %}franja-rosa{% else %}bg-white{% endif %} d-flex justify-content-between align-items-center">
         <strong class="d-flex align-items-center gap-2 flex-wrap">
           <span id="nombre-grupo-{{ g.id }}">{{ g.nombre }}</span>
           <form class="d-inline" method="post" action="{{ url_for('main.grupo_renombrar', gid=g.id) }}" id="form-ren-{{ g.id }}">

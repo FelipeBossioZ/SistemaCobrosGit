@@ -598,7 +598,12 @@ document.addEventListener("click", e => {
   });
   var nav = document.querySelector("nav.navbar");
   if (nav) {
-    var onS = function () { nav.classList.toggle("nav-delgada", window.scrollY > 8); };
+    var delgada = false;
+    var onS = function () {
+      var y = window.scrollY;
+      if (!delgada && y > 40) { delgada = true; nav.classList.add("nav-delgada"); }
+      else if (delgada && y < 6) { delgada = false; nav.classList.remove("nav-delgada"); }
+    };
     window.addEventListener("scroll", onS, { passive: true });
     onS();
   }

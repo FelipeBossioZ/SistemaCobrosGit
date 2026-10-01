@@ -715,6 +715,77 @@ def clientes_sync_maestro():
     return redirect(request.referrer or url_for("main.clientes"))
 
 
+def _cobrado_pagado_anterior(a, ids_cli):
+    """(cobrado, pagado, anio) del año inmediatamente anterior para los clientes
+    ids_cli: suma de sus lineas activas menos ajustes prorrateados, y lo
+    efectivamente pagado (limitado a lo cobrado). Solo cuentas no anuladas."""
+    anterior = (AnioCobro.query.filter(AnioCobro.anio_cobro < a.anio_cobro)
+                .order_by(AnioCobro.anio_cobro.desc()).first())
+    cob = pag = 0.0
+    if anterior and ids_cli:
+        for cu in (CuentaCobro.query.filter_by(anio_cobro_id=anterior.id)
+                   .filter(CuentaCobro.estado != "ANULADA").all()):
+            ls = [l for l in cu.lineas if l.estado == "ACTIVA" and l.cliente_id in ids_cli]
+            if not ls:
+                continue
+            tot = sum(float(l.valor or 0) for l in ls)
+            aj = float(cu.total_ajustes or 0)
+            cob += max(tot - aj, 0.0)
+            pag += min(float(cu.total_pagado or 0), max(tot - aj, 0.0))
+    anio = anterior.anio_cobro if anterior else None
+    return cob, pag, anio
+
+
+def _lineas_previstas(cli, a):
+    """(miembros_con_valores, es_grupo) tal como los crearia cuenta-expresa.
+    Lanza ValueError con el mensaje del bloqueo si no se puede crear."""
+    if cli.es_pagador and cli.grupo_id:
+        miembros = [m for m in cli.grupo.miembros if m.activo]
+    else:
+        miembros = [cli]
+    lineas = []
+    for m in miembros:
+        p = PresupuestoCliente.query.filter_by(cliente_id=m.id, anio_cobro=a.anio_cobro).first()
+        if not p or p.valor <= 0:
+            raise ValueError(f"{m.nombre} no tiene presupuesto {a.anio_cobro}.")
+        lineas.append((m, float(p.valor)))
+    return lineas, len(miembros) > 1
+
+
+@bp.route("/clientes/<int:cid>/previsualizar-pdf", methods=["GET"])
+def cliente_previsualizar_pdf(cid):
+    """Preliminar del PDF SIN crear nada: mismos datos que usaria cuenta-expresa,
+    con el numero que tomaria la cuenta. Devuelve el PDF en memoria (BytesIO)."""
+    a = anio_actual()
+    if not a:
+        return "No hay año activo", 404
+    cli = db.get_or_404(Cliente, cid)
+    ya = (CuentaLinea.query.join(CuentaCobro)
+          .filter(CuentaLinea.cliente_id == cli.id,
+                  CuentaCobro.anio_cobro_id == a.id,
+                  CuentaLinea.estado == "ACTIVA",
+                  CuentaCobro.estado != "ANULADA").first())
+    if ya:
+        return (f"Este cliente ya está en la cuenta {ya.cuenta.numero_formateado}. "
+                "No hay nada que previsualizar.", 409)
+    try:
+        lineas, es_grupo = _lineas_previstas(cli, a)
+    except ValueError as e:
+        return str(e), 409
+    from io import BytesIO
+    from .pdf_generator import datos_preview, generar_desde_dict
+    d = datos_preview(a,
+                      [{"nombre": m.nombre, "concepto": "", "valor": v} for m, v in lineas],
+                      cli)
+    d["numero"] = f"{a.prefijo}-{_numero_libre(a):03d}"   # el mismo que tomara la cuenta real
+    buf = BytesIO()
+    generar_desde_dict(d, buf)
+    buf.seek(0)
+    return send_file(buf, mimetype="application/pdf",
+                     download_name=f"Preliminar_{cli.nombre.replace(' ', '_')}.pdf",
+                     as_attachment=False)
+
+
 @bp.route("/clientes/<int:cid>/cuenta-expresa", methods=["POST"])
 def cliente_cuenta_expresa(cid):
     """Un clic: crea la cuenta con lo presupuestado (a toda la familia si el cliente
@@ -980,7 +1051,15 @@ def cliente_detalle(cid):
                    "base_min": (fx["it"].base_min or ""),
                    "en_maestro": bool(fx["en_maestro"])} for fx in filas_asesorias],
     }
+    if cli.es_pagador and cli.grupo_id:
+        ids_ant = [m.id for m in cli.grupo.miembros if m.activo]
+    else:
+        ids_ant = [cli.id]
+    cob_ant, pag_ant, anio_ant = (_cobrado_pagado_anterior(a, ids_ant) if a
+                                  else (0.0, 0.0, None))
     return render_template("cliente_detalle.html", cli=cli, presup=presup,
+                           resumen_ant={"cobrado": cob_ant, "pagado": pag_ant,
+                                        "anio": anio_ant},
                            datos_asesorias=_json.dumps(datos_js),
                            historial=historial, a=a,
                            filas_asesorias=filas_asesorias,

@@ -103,7 +103,7 @@
                     title="{{ cli.estado_cobro_grupo }}">{{ cli.decl_renta == 'PRESENTADA' and '✓ Renta' or (cli.decl_renta == 'NO_OBLIGADO' and 'No oblig.' or 'Sin dato') }}</button>
           </form>
         </td>
-        <td class="num">{% set p = presup.get(cli.id) %}{% if p %}{{ (p.valor)|money }}{% endif %}</td>
+        <td class="num">{% set p = presup.get(cli.id) %}{% if p %}{{ (p.vigente)|money }}{% endif %}</td>
         <td class="num text-success">{% set pg = pagado_actual.get(cli.id) %}{% if pg %}{{ pg|money }}{% else %}·{% endif %}</td>
         {% set ca = cob_ant_h.get(cli.id) %}
         <td class="num text-muted" {% if ca is not none %}title="De la cuenta de cobro {{ (a.anio_cobro|int - 1) if a }} registrada en el sistema"{% else %}title="Dato manual (el sistema no tiene cuenta de {{ (a.anio_cobro|int - 1) if a }})"{% endif %}>{% if ca is not none %}{{ ca|money }}{% elif cli.cobrado_anterior %}{{ cli.cobrado_anterior|money }}{% else %}·{% endif %}</td>

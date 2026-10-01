@@ -6,6 +6,10 @@ from sqlalchemy import text
 def ejecutar(db):
     """Idempotente: solo agrega lo que falte."""
     with db.engine.connect() as con:
+        cols_pr = {r[1] for r in con.execute(text("PRAGMA table_info(presupuestos)"))}
+        if cols_pr and "valor_final" not in cols_pr:
+            con.execute(text("ALTER TABLE presupuestos ADD COLUMN valor_final FLOAT"))
+            con.commit()
         cols = {r[1] for r in con.execute(text("PRAGMA table_info(clientes)"))}
         if "cobrado_anterior_real" not in cols:
             con.execute(text("ALTER TABLE clientes ADD COLUMN cobrado_anterior_real NUMERIC DEFAULT 0"))

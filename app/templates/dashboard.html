@@ -5,6 +5,13 @@
   <a class="btn btn-outline-primary btn-sm" href="{{ url_for('main.exportar_excel') }}">
     <i class="bi bi-file-earmark-excel"></i> Exportar Excel</a></h3>
 
+<div class="row g-2 mb-3">
+  <div class="col-md-5 col-lg-4">
+    <input id="buscarResumen" class="form-control" type="search" autocomplete="off"
+           placeholder="Buscar: n&uacute;mero de cuenta, cliente, fecha o estado...">
+  </div>
+</div>
+
 <div class="row g-3 mb-4">
   <div class="col-md-3"><div class="card p-3">
     <div class="text-muted small">PRESUPUESTADO</div>
@@ -43,7 +50,7 @@
         <a class="btn btn-primary btn-sm" href="{{ url_for('main.cuenta_nueva') }}"><i class="bi bi-plus-lg"></i> Nueva cuenta</a>
       </div>
       <div class="table-responsive">
-      <table class="table table-sm table-hover mb-0">
+      <table class="table table-sm table-hover mb-0" id="tablaCuentas">
         <thead><tr><th>Nº</th><th>Fecha</th><th>Clientes</th><th class="num">Total</th>
           <th class="num">Pagado</th><th class="num">Saldo</th><th>Estado</th><th>Envío</th><th style="width: 205px;">Acciones</th></tr></thead>
         <tbody>
@@ -76,6 +83,7 @@
         {% else %}
           <tr><td colspan="9" class="text-center text-muted py-4">Aún no hay cuentas. Crea la primera o importa el Excel.</td></tr>
         {% endfor %}
+        <tr class="d-none" id="sinResultadosCtas"><td colspan="9" class="text-center text-muted py-4">Sin cuentas que coincidan con la b&uacute;squeda.</td></tr>
         </tbody>
       </table>
       </div>
@@ -86,13 +94,14 @@
     <div class="card">
       <div class="card-header bg-white fw-semibold">Clientes sin cuenta de cobro ({{ sin_cuenta|length }})</div>
       <div class="card-body p-0" style="max-height: 480px; overflow-y:auto;">
-        <table class="table table-sm mb-0">
+        <table class="table table-sm mb-0" id="tablaSinCuenta">
           <tbody>
           {% for cli in sin_cuenta %}
             <tr><td class="small">{{ loop.index }}. <a href="{{ url_for('main.cliente_detalle', cid=cli.id) }}">{{ cli.nombre }}</a></td></tr>
           {% else %}
             <tr><td class="text-center text-muted py-4">Todos los clientes con presupuesto tienen cuenta 🎉</td></tr>
           {% endfor %}
+          <tr class="d-none" id="sinResultadosCli"><td class="text-center text-muted py-3 small">Sin clientes que coincidan.</td></tr>
           </tbody>
         </table>
       </div>
@@ -108,5 +117,33 @@
       </div>
     </div>
   </div>
-</div>
+</div>{% endblock %}
+
+{% block scripts %}
+<script>
+// --- Buscador del Resumen: filtra la tabla de cuentas y la lista de sin cuenta ---
+var br = document.getElementById('buscarResumen');
+if (br) {
+  br.addEventListener('input', function(){
+    var q = this.value.toLowerCase().trim(), vis = 0;
+    document.querySelectorAll('#tablaCuentas tbody tr').forEach(function(tr){
+      if (tr.querySelector('td[colspan]')) return; // fila de estado vacio
+      var hay = !q || tr.textContent.toLowerCase().includes(q);
+      tr.style.display = hay ? '' : 'none';
+      if (hay && q) vis++;
+    });
+    var sr = document.getElementById('sinResultadosCtas');
+    if (sr) sr.classList.toggle('d-none', !(q && vis === 0));
+    vis = 0;
+    document.querySelectorAll('#tablaSinCuenta tbody tr').forEach(function(tr){
+      if (tr.querySelector('td[colspan]')) return;
+      var hay = !q || tr.textContent.toLowerCase().includes(q);
+      tr.style.display = hay ? '' : 'none';
+      if (hay && q) vis++;
+    });
+    var sr2 = document.getElementById('sinResultadosCli');
+    if (sr2) sr2.classList.toggle('d-none', !(q && vis === 0));
+  });
+}
+</script>
 {% endblock %}

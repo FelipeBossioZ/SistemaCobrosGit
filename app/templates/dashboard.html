@@ -45,8 +45,17 @@
 <div class="row g-3">
   <div class="col-lg-8">
     <div class="card">
-      <div class="card-header bg-white fw-semibold d-flex justify-content-between align-items-center">
-        <span>Cuentas de cobro {{ a.prefijo }}-xxx</span>
+      <div class="card-header bg-white fw-semibold d-flex justify-content-between align-items-center gap-2 flex-wrap">
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+          <span>Cuentas de cobro {{ a.prefijo }}-xxx</span>
+          <div class="btn-group btn-group-sm flex-wrap" role="group" aria-label="Filtrar cuentas por estado" id="filtroEstado">
+            <button type="button" class="btn btn-outline-secondary active" data-estado="" data-base="Todo">Todo</button>
+            <button type="button" class="btn btn-outline-secondary" data-estado="BORRADOR" data-base="Borrador">Borrador</button>
+            <button type="button" class="btn btn-outline-secondary" data-estado="ENVIADA" data-base="Enviada">Enviada</button>
+            <button type="button" class="btn btn-outline-secondary" data-estado="PAGADA" data-base="Pagada">Pagada</button>
+            <button type="button" class="btn btn-outline-secondary" data-estado="ANULADA" data-base="Anulada">Anulada</button>
+          </div>
+        </div>
         <a class="btn btn-primary btn-sm" href="{{ url_for('main.cuenta_nueva') }}"><i class="bi bi-plus-lg"></i> Nueva cuenta</a>
       </div>
       <div class="table-responsive">
@@ -121,28 +130,59 @@
 
 {% block scripts %}
 <script>
-// --- Buscador del Resumen: filtra la tabla de cuentas y la lista de sin cuenta ---
+// --- Buscador + filtro de estado del Resumen ---
 var br = document.getElementById('buscarResumen');
+var q = '';
+var estadoSel = '';
+function filaEstado(tr){
+  var badge = tr.querySelector('[class*="badge-estado"]');
+  return badge ? badge.textContent.trim().toUpperCase() : '';
+}
+function filtrarResumen(){
+  var vis = 0;
+  document.querySelectorAll('#tablaCuentas tbody tr').forEach(function(tr){
+    if (tr.querySelector('td[colspan]')) return; // fila de estado vacio
+    var hay = (!q || tr.textContent.toLowerCase().includes(q)) &&
+              (!estadoSel || filaEstado(tr) === estadoSel);
+    tr.style.display = hay ? '' : 'none';
+    if (hay && (q || estadoSel)) vis++;
+  });
+  var sr = document.getElementById('sinResultadosCtas');
+  if (sr) sr.classList.toggle('d-none', !((q || estadoSel) && vis === 0));
+  vis = 0;
+  document.querySelectorAll('#tablaSinCuenta tbody tr').forEach(function(tr){
+    if (tr.querySelector('td[colspan]')) return;
+    var hay = !q || tr.textContent.toLowerCase().includes(q);
+    tr.style.display = hay ? '' : 'none';
+    if (hay && q) vis++;
+  });
+  var sr2 = document.getElementById('sinResultadosCli');
+  if (sr2) sr2.classList.toggle('d-none', !(q && vis === 0));
+}
 if (br) {
   br.addEventListener('input', function(){
-    var q = this.value.toLowerCase().trim(), vis = 0;
-    document.querySelectorAll('#tablaCuentas tbody tr').forEach(function(tr){
-      if (tr.querySelector('td[colspan]')) return; // fila de estado vacio
-      var hay = !q || tr.textContent.toLowerCase().includes(q);
-      tr.style.display = hay ? '' : 'none';
-      if (hay && q) vis++;
+    q = this.value.toLowerCase().trim();
+    filtrarResumen();
+  });
+}
+var fg = document.getElementById('filtroEstado');
+if (fg) {
+  var conteo = {};
+  document.querySelectorAll('#tablaCuentas tbody tr').forEach(function(tr){
+    if (tr.querySelector('td[colspan]')) return;
+    var est = filaEstado(tr);
+    conteo[est] = (conteo[est] || 0) + 1;
+  });
+  fg.querySelectorAll('button').forEach(function(b){
+    var est = b.dataset.estado;
+    var n = conteo[est] || 0;
+    if (n) b.textContent = b.dataset.base + ' (' + n + ')';
+    b.addEventListener('click', function(){
+      estadoSel = est;
+      fg.querySelectorAll('button').forEach(function(x){ x.classList.remove('active'); });
+      b.classList.add('active');
+      filtrarResumen();
     });
-    var sr = document.getElementById('sinResultadosCtas');
-    if (sr) sr.classList.toggle('d-none', !(q && vis === 0));
-    vis = 0;
-    document.querySelectorAll('#tablaSinCuenta tbody tr').forEach(function(tr){
-      if (tr.querySelector('td[colspan]')) return;
-      var hay = !q || tr.textContent.toLowerCase().includes(q);
-      tr.style.display = hay ? '' : 'none';
-      if (hay && q) vis++;
-    });
-    var sr2 = document.getElementById('sinResultadosCli');
-    if (sr2) sr2.classList.toggle('d-none', !(q && vis === 0));
   });
 }
 </script>

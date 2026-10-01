@@ -6,6 +6,19 @@
 <span class="badge bg-info text-dark">pagador</span> a nombre de quién se emite. Dentro de un grupo
 puedes tener subgrupos: simplemente crea otro grupo con los miembros que quieras.</p>
 
+<div class="input-group mb-3" style="max-width: 560px;">
+  <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+  <input id="buscarGrupo" class="form-control" type="search" autocomplete="off"
+         placeholder="Buscar familia o miembro por nombre...">
+</div>
+<div id="sinResultados" class="alert alert-light border d-none small text-muted">
+  Ninguna familia coincide con la búsqueda.</div>
+<style>
+  /* color SOLO en la franja del titulo; la tarjeta queda blanca */
+  .franja-rosa { background: #FCECEF; }
+  .franja-limon { background: #FCF8DC; }
+</style>
+
 <div class="row g-4">
   <div class="col-lg-7">
     <form class="row g-2 mb-3" method="post" action="{{ url_for('main.grupo_nuevo') }}">
@@ -14,8 +27,9 @@ puedes tener subgrupos: simplemente crea otro grupo con los miembros que quieras
     </form>
 
     {% for g in grupos %}
+    {% set est = estado_grupos.get(g.id) %}
     <div class="card mb-3">
-      <div class="card-header bg-white d-flex justify-content-between align-items-center">
+      <div class="card-header {% if est == 'ok' %}franja-limon{% elif est == 'parcial' %}franja-rosa{% else %}bg-white{% endif %} d-flex justify-content-between align-items-center">
         <strong class="d-flex align-items-center gap-2 flex-wrap">
           <span id="nombre-grupo-{{ g.id }}">{{ g.nombre }}</span>
           <form class="d-inline" method="post" action="{{ url_for('main.grupo_renombrar', gid=g.id) }}" id="form-ren-{{ g.id }}">
@@ -30,6 +44,12 @@ puedes tener subgrupos: simplemente crea otro grupo con los miembros que quieras
           {% if faltan %}<span class="badge bg-warning text-dark"
               title="Faltan declaraciones de: {{ faltan|map(attribute='nombre')|join(', ') }}">sin cobrar</span>
           {% else %}<span class="badge bg-success" title="Todos con renta presentada o no obligados">al día · cobrable</span>{% endif %}
+          {% set ns = namespace(con_cuenta=0, pagaron=0) %}
+          {% for cli in g.miembros %}{% set p = pagos_map.get(cli.id) %}{% if p %}
+            {% set ns.con_cuenta = ns.con_cuenta + 1 %}{% if p.estado == 'pagado' %}{% set ns.pagaron = ns.pagaron + 1 %}{% endif %}
+          {% endif %}{% endfor %}
+          {% if ns.con_cuenta %}<span class="badge {% if ns.pagaron == ns.con_cuenta %}bg-success{% else %}bg-light text-dark{% endif %}"
+              title="Miembros con cuenta este año: {{ ns.con_cuenta }} · pagaron: {{ ns.pagaron }}">pagaron {{ ns.pagaron }}/{{ ns.con_cuenta }}</span>{% endif %}
         </strong>
         <div class="d-flex gap-2 align-items-center">
           {% if g.pagador %}
@@ -53,6 +73,14 @@ puedes tener subgrupos: simplemente crea otro grupo con los miembros que quieras
               <a href="{{ url_for('main.cliente_detalle', cid=cli.id) }}">{{ cli.nombre }}</a>
               {% if cli.es_pagador %}<span class="badge bg-info text-dark">pagador · sale a su nombre</span>{% endif %}
               {% if not cli.decl_ok %}<span class="badge bg-warning text-dark">falta renta</span>{% endif %}
+              {% set p = pagos_map.get(cli.id) %}
+              {% if p and p.estado == 'pagado' %}
+              <span class="badge bg-success" title="Su parte en las cuentas de este año: {{ p.pagado|money }} de {{ p.debe|money }}"><i class="bi bi-check-circle-fill"></i> pagó</span>
+              {% elif p and p.estado == 'abono' %}
+              <span class="badge bg-warning text-dark" title="Pagos imputados a su parte este año (prorrateados entre los miembros de cada cuenta)">abonó {{ p.pagado|money }} de {{ p.debe|money }}</span>
+              {% elif p %}
+              <span class="badge bg-secondary" title="Sin pagos en las cuentas donde aparece este año">debe {{ p.debe|money }}</span>
+              {% endif %}
             </td>
             <td class="text-end" style="width: 240px;">
               {% if not cli.es_pagador %}
@@ -84,7 +112,7 @@ puedes tener subgrupos: simplemente crea otro grupo con los miembros que quieras
         <table class="table table-sm mb-0">
           <tbody>
           {% for cli in clientes_sin_grupo %}
-            <tr><td class="small">{{ cli.nombre }}</td><td></td></tr>
+            <tr class="fila-sin-grupo"><td class="small">{{ cli.nombre }}</td><td></td></tr>
           {% else %}
             <tr><td class="text-muted small p-3">Todos los clientes tienen grupo.</td></tr>
           {% endfor %}
@@ -136,5 +164,31 @@ document.querySelectorAll("form[data-cli]").forEach(function(f){
     f.action = "/grupos/" + sel.value + "/agregar";
   });
 });
+// --- Buscador en vivo: filtra tarjetas de grupos (nombre o miembros) y la lista de sin grupo ---
+var bs = document.getElementById('buscarGrupo');
+if (bs) {
+  bs.addEventListener('input', function(){
+    var q = this.value.toLowerCase().trim(), vis = 0;
+    document.querySelectorAll('.card.mb-3').forEach(function(card){
+      var hay = card.textContent.toLowerCase().includes(q);
+      card.style.display = hay ? '' : 'none';
+      if (hay) vis++;
+    });
+    document.querySelectorAll('.fila-sin-grupo').forEach(function(tr){
+      tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
+    });
+    document.getElementById('sinResultados').classList.toggle('d-none', vis > 0 || !q);
+  });
+}
+// --- Volver al mismo lugar tras cada accion (renombrar, quitar, pagar-switch, etc.) ---
+document.querySelectorAll('form').forEach(function(f){
+  f.addEventListener('submit', function(){
+    try { sessionStorage.setItem('gruposScroll', window.scrollY); } catch(e) {}
+  });
+});
+try {
+  var y = sessionStorage.getItem('gruposScroll');
+  if (y !== null) { window.scrollTo(0, parseInt(y, 10) || 0); sessionStorage.removeItem('gruposScroll'); }
+} catch(e) {}
 </script>
 {% endblock %}

@@ -22,6 +22,9 @@
     <button type="button" class="btn btn-warning" id="btn-paquete" data-bs-toggle="modal" data-bs-target="#modalPaquete"
             title="Construye el presupuesto desde la base de renta: base × marcas = presupuesto">
       <i class="bi bi-calculator"></i> Construir desde la base...</button>
+    <button type="button" class="btn btn-success" data-bs-toggle="modal" data-bs-target="#modalPrevPdf"
+            title="Mira cómo queda el PDF antes de crear nada; confirma o cancela">
+      <i class="bi bi-file-earmark-pdf"></i> Previsualizar PDF</button>
     <a class="btn btn-outline-secondary" href="{{ url_for('main.cliente_photo_card', cid=cli.id) }}" target="_blank"><i class="bi bi-printer"></i> Photo card</a>
     <a class="btn btn-outline-primary" href="{{ url_for('main.cliente_editar', cid=cli.id) }}"><i class="bi bi-pencil"></i> Editar</a>
     <a class="btn btn-outline-secondary" href="{{ url_for('main.clientes') }}">Volver</a>
@@ -32,17 +35,23 @@
   <div class="card-header bg-white fw-semibold">Presupuestos por año</div>
   <div class="card-body p-0">
     <table class="table table-sm mb-0">
-      <thead><tr><th>Año de cobro</th><th class="num">Valor presupuestado</th></tr></thead>
+      <thead><tr><th>Año de cobro</th><th class="num" title="Propuesta inicial del sistema (no cambia)">Valor presupuestado</th></tr></thead>
       <tbody>
       {% for p in presup %}
         <tr><td>{{ p.anio_cobro }}</td><td class="num">{{ (p.valor)|money }}</td></tr>
       {% endfor %}
       {% if a %}
       <tr>
-        <td>
-          <button type="button" class="btn btn-sm btn-outline-warning" data-bs-toggle="modal" data-bs-target="#modalPaquete">Construir desde la base...</button>
-        </td>
-        <td class="num text-muted" id="presup-actual">{{ presup_act|money if presup_act else '·' }}</td>
+        <td class="text-muted">Cobrado año anterior{% if resumen_ant.anio %} ({{ resumen_ant.anio }}){% endif %}</td>
+        <td class="num text-muted">{{ resumen_ant.cobrado|money if resumen_ant.anio else '—' }}</td>
+      </tr>
+      <tr>
+        <td class="text-muted">Efectivamente pagado año anterior</td>
+        <td class="num">{{ resumen_ant.pagado|money if resumen_ant.anio else '—' }}</td>
+      </tr>
+      <tr>
+        <td class="text-muted">Presupuesto {{ a.anio_cobro }} (este año)</td>
+        <td class="num" id="presup-actual">{{ presup_act|money if presup_act else '·' }}{% if presup_prop and presup_act and presup_act != presup_prop %} <span class="badge text-bg-light" title="El sistema propuso {{ presup_prop|money }}; este valor viene de 'Construir desde base' o de una edición manual">ajustado desde base</span>{% endif %}</td>
       </tr>
       {% endif %}
       </tbody>
@@ -194,6 +203,37 @@
     {% endfor %}
     </tbody>
   </table>
+  </div>
+</div>
+
+<div class="modal fade" id="modalPrevPdf" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Preliminar {{ a.anio_cobro if a }} — {{ cli.nombre }}</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+          <div class="small">
+            <span class="text-muted">Año anterior{% if resumen_ant.anio %} ({{ resumen_ant.anio }}){% endif %}:</span>
+            <span class="fw-semibold">Cobrado: {{ resumen_ant.cobrado|money if resumen_ant.anio else '—' }}</span>
+            <span class="text-muted">·</span>
+            <span class="fw-semibold">Efectivamente pagado: {{ resumen_ant.pagado|money if resumen_ant.anio else '—' }}</span>
+          </div>
+          <span class="badge bg-light text-dark">preliminar — aún no se crea nada</span>
+        </div>
+        <iframe id="framePrev" data-src="{{ url_for('main.cliente_previsualizar_pdf', cid=cli.id) }}"
+                style="width:100%;height:62vh;border:1px solid #ddd;border-radius:.5rem;background:#f8f8f8;"></iframe>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">
+          <i class="bi bi-x-lg"></i> Cancelar (no crea nada)</button>
+        <form method="post" action="{{ url_for('main.cliente_cuenta_expresa', cid=cli.id) }}" class="d-inline">
+          <button class="btn btn-success"><i class="bi bi-check-lg"></i> Confirmar: crear cuenta y PDF</button>
+        </form>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -555,5 +595,21 @@
       }).catch(() => { btn.disabled = false; res.innerHTML = '<span class="text-danger">Error de red.</span>'; });
   });
 })();
+</script>
+{% endblock %}
+
+{% block scripts %}
+<script>
+var mPrev = document.getElementById('modalPrevPdf');
+if (mPrev) {
+  mPrev.addEventListener('show.bs.modal', function(){
+    var f = document.getElementById('framePrev');
+    if (f && !f.src) { f.src = f.dataset.src; }
+  });
+  mPrev.addEventListener('hidden.bs.modal', function(){
+    var f = document.getElementById('framePrev');
+    if (f) { f.src = 'about:blank'; }
+  });
+}
 </script>
 {% endblock %}

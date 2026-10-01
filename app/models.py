@@ -268,6 +268,13 @@ class PresupuestoCliente(db.Model):
     anio_cobro = db.Column(db.Integer, nullable=False)
     valor = db.Column(db.Float, default=0.0)
     valor_pagado_ref = db.Column(db.Float, default=0.0)  # pago real año anterior (referencia negociación)
+    valor_final = db.Column(db.Float)  # valor VIGENTE (None = se usa la propuesta 'valor')
+
+    @property
+    def vigente(self):
+        """Valor vigente del presupuesto: valor_final si ya hubo ajuste; si no, la propuesta."""
+        v = self.valor_final
+        return float(v if v is not None else (self.valor or 0))
 
     __table_args__ = (db.UniqueConstraint("cliente_id", "anio_cobro", name="uq_presupuesto"),)
 

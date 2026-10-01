@@ -72,7 +72,7 @@
     <div class="col-md-4">
       <label class="form-label">Presupuesto {{ a.anio_cobro }}</label>
       <input class="form-control" type="number" step="1000" name="valor"
-             value="{{ presup_actual.valor|int if presup_actual else 0 }}">
+             value="{{ presup_actual.vigente|int if presup_actual else 0 }}">
     </div>
     {% endif %}
     <div class="col-md-8">

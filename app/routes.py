@@ -200,7 +200,8 @@ def dashboard():
     a = anio_actual()
     if not a:
         return render_template("sin_anio.html")
-    presup = db.session.query(db.func.coalesce(db.func.sum(PresupuestoCliente.valor), 0.0))\
+    presup = db.session.query(db.func.coalesce(
+        db.func.sum(db.func.coalesce(PresupuestoCliente.valor_final, PresupuestoCliente.valor)), 0.0))\
         .filter_by(anio_cobro=a.anio_cobro).scalar()
     emitido = db.session.query(db.func.coalesce(db.func.sum(CuentaLinea.valor), 0.0))\
         .join(CuentaCobro).filter(CuentaCobro.anio_cobro_id == a.id,
@@ -217,7 +218,7 @@ def dashboard():
     con_cuenta = {l.cliente_id for c in a.cuentas for l in c.lineas if l.estado == "ACTIVA"}
     sin_cuenta = []
     for p in PresupuestoCliente.query.filter_by(anio_cobro=a.anio_cobro).all():
-        if p.cliente.activo and p.valor > 0 and p.cliente.id not in con_cuenta:
+        if p.cliente.activo and p.vigente > 0 and p.cliente.id not in con_cuenta:
             sin_cuenta.append(p.cliente)
     sin_cuenta.sort(key=lambda c: c.nombre)
 
@@ -298,6 +299,40 @@ def clientes():
             for l in ls:
                 pagado_actual[l.cliente_id] = pagado_actual.get(l.cliente_id, 0.0) \
                     + pago.valor * (l.valor / tot)
+    # resumen año anterior HÍBRIDO por cliente (ficha, listado y preliminar
+    # hablan igual): si hay cuentas del año anterior se calcula desde ellas;
+    # si no, el listado muestra los campos manuales tal cual.
+    cob_ant_h, pag_ant_h = {}, {}
+    if a:
+        anterior = (AnioCobro.query.filter(AnioCobro.anio_cobro < a.anio_cobro)
+                    .order_by(AnioCobro.anio_cobro.desc()).first())
+        if anterior:
+            c_ids_a = {c.id: c for c in CuentaCobro.query
+                       .filter_by(anio_cobro_id=anterior.id)
+                       .filter(CuentaCobro.estado != "ANULADA").all()}
+            lin_cta = {}
+            for l in CuentaLinea.query.filter_by(estado="ACTIVA").all():
+                if l.cuenta_id in c_ids_a:
+                    lin_cta.setdefault(l.cuenta_id, []).append(l)
+            cob_tmp, pag_tmp = {}, {}
+            for cu_id, ls in lin_cta.items():
+                cu = c_ids_a[cu_id]
+                tot = sum(float(l.valor or 0) for l in ls)
+                if tot <= 0:
+                    continue
+                neto = max(tot - float(cu.total_ajustes or 0), 0.0)
+                real = min(float(cu.total_pagado or 0), neto)
+                for l in ls:
+                    f = float(l.valor or 0) / tot
+                    cob_tmp[l.cliente_id] = cob_tmp.get(l.cliente_id, 0.0) + neto * f
+                    pag_tmp[l.cliente_id] = pag_tmp.get(l.cliente_id, 0.0) + real * f
+            for cli in lista:
+                ids_m = ([m.id for m in cli.grupo.miembros if m.activo]
+                         if cli.es_pagador and cli.grupo_id else [cli.id])
+                if any(i in cob_tmp for i in ids_m):
+                    cob_ant_h[cli.id] = sum(cob_tmp.get(i, 0.0) for i in ids_m)
+                    pag_ant_h[cli.id] = sum(pag_tmp.get(i, 0.0) for i in ids_m)
+
     # correos (.eml) por cliente: los .eml se nombran SLUG-DEL-PAGADOR_CdeC_...,
     # así que un cliente tiene correo si SU slug (o el de un grupo donde es pagador) está
     n_correos = {}
@@ -335,6 +370,7 @@ def clientes():
     return render_template("clientes.html", clientes=lista, ver=ver,
                            presup=presup, a=a, correos=correos,
                            estados_cobro=estados_cobro, pagado_actual=pagado_actual,
+                           cob_ant_h=cob_ant_h, pag_ant_h=pag_ant_h,
                            maestro_check=maestro_check, previo_audit=previo_audit,
                            previo_sin_emitir=previo_sin_emitir,
                            grupos=GrupoFamiliar.query.order_by(GrupoFamiliar.nombre))
@@ -406,7 +442,7 @@ def cliente_photo_card(cid):
     presup = 0.0
     if a:
         p = PresupuestoCliente.query.filter_by(cliente_id=cid, anio_cobro=a.anio_cobro).first()
-        presup = float(p.valor or 0) if p else 0.0
+        presup = float(p.vigente or 0) if p else 0.0
     trabajos = cli.trabajos.order_by(TrabajoAdicional.fecha.desc(), TrabajoAdicional.id.desc()).all()
     return render_template("photo_card.html", cli=cli, a=a, filas=filas,
                            excluidas=excluidas, total=total, presup=presup,
@@ -488,7 +524,7 @@ def morosos():
     estados = {cid_: ETAQ[n[0]] for cid_, n in est_cli.items()}
     niveles = {cid_: n[0] for cid_, n in est_cli.items()}
 
-    presup = {p.cliente_id: p.valor for p in
+    presup = {p.cliente_id: p.vigente for p in
               PresupuestoCliente.query.filter_by(anio_cobro=a.anio_cobro).all()}
 
     deudores, acuerdos, sin_cobro = [], [], []
@@ -715,6 +751,86 @@ def clientes_sync_maestro():
     return redirect(request.referrer or url_for("main.clientes"))
 
 
+def _cobrado_pagado_anterior(a, clientes):
+    """(cobrado, pagado, anio) del año inmediatamente anterior, HÍBRIDO:
+    si el sistema ya tiene cuentas del año anterior para esos clientes, calcula
+    desde las cuentas (líneas activas menos ajustes prorrateados; pagos reales
+    limitados a lo cobrado). Si no hay ninguna, usa los campos manuales del
+    listado (cobrado_anterior / cobrado_anterior_real): historia previa al sistema."""
+    anterior = (AnioCobro.query.filter(AnioCobro.anio_cobro < a.anio_cobro)
+                .order_by(AnioCobro.anio_cobro.desc()).first())
+    cob = pag = 0.0
+    ids = {c.id for c in clientes}
+    tiene = False
+    if anterior and ids:
+        for cu in (CuentaCobro.query.filter_by(anio_cobro_id=anterior.id)
+                   .filter(CuentaCobro.estado != "ANULADA").all()):
+            ls = [l for l in cu.lineas if l.estado == "ACTIVA" and l.cliente_id in ids]
+            if not ls:
+                continue
+            tiene = True
+            tot = sum(float(l.valor or 0) for l in ls)
+            aj = float(cu.total_ajustes or 0)
+            cob += max(tot - aj, 0.0)
+            pag += min(float(cu.total_pagado or 0), max(tot - aj, 0.0))
+    if not tiene:
+        cob = sum(float(c.cobrado_anterior or 0) for c in clientes)
+        pag = sum(float(c.cobrado_anterior_real or 0) for c in clientes)
+    # sin fila registrada del año anterior igual rotulamos (año actual - 1)
+    anio = anterior.anio_cobro if anterior else (a.anio_cobro - 1)
+    return cob, pag, anio
+
+
+def _lineas_previstas(cli, a):
+    """(miembros_con_valores, es_grupo) tal como los crearia cuenta-expresa.
+    Lanza ValueError con el mensaje del bloqueo si no se puede crear."""
+    if cli.es_pagador and cli.grupo_id:
+        miembros = [m for m in cli.grupo.miembros if m.activo]
+    else:
+        miembros = [cli]
+    lineas = []
+    for m in miembros:
+        p = PresupuestoCliente.query.filter_by(cliente_id=m.id, anio_cobro=a.anio_cobro).first()
+        if not p or p.vigente <= 0:
+            raise ValueError(f"{m.nombre} no tiene presupuesto {a.anio_cobro}.")
+        lineas.append((m, float(p.vigente)))
+    return lineas, len(miembros) > 1
+
+
+@bp.route("/clientes/<int:cid>/previsualizar-pdf", methods=["GET"])
+def cliente_previsualizar_pdf(cid):
+    """Preliminar del PDF SIN crear nada: mismos datos que usaria cuenta-expresa,
+    con el numero que tomaria la cuenta. Devuelve el PDF en memoria (BytesIO)."""
+    a = anio_actual()
+    if not a:
+        return "No hay año activo", 404
+    cli = db.get_or_404(Cliente, cid)
+    ya = (CuentaLinea.query.join(CuentaCobro)
+          .filter(CuentaLinea.cliente_id == cli.id,
+                  CuentaCobro.anio_cobro_id == a.id,
+                  CuentaLinea.estado == "ACTIVA",
+                  CuentaCobro.estado != "ANULADA").first())
+    if ya:
+        return (f"Este cliente ya está en la cuenta {ya.cuenta.numero_formateado}. "
+                "No hay nada que previsualizar.", 409)
+    try:
+        lineas, es_grupo = _lineas_previstas(cli, a)
+    except ValueError as e:
+        return str(e), 409
+    from io import BytesIO
+    from .pdf_generator import datos_preview, generar_desde_dict
+    d = datos_preview(a,
+                      [{"nombre": m.nombre, "concepto": "", "valor": v} for m, v in lineas],
+                      cli)
+    d["numero"] = f"{a.prefijo}-{_numero_libre(a):03d}"   # el mismo que tomara la cuenta real
+    buf = BytesIO()
+    generar_desde_dict(d, buf)
+    buf.seek(0)
+    return send_file(buf, mimetype="application/pdf",
+                     download_name=f"Preliminar_{cli.nombre.replace(' ', '_')}.pdf",
+                     as_attachment=False)
+
+
 @bp.route("/clientes/<int:cid>/cuenta-expresa", methods=["POST"])
 def cliente_cuenta_expresa(cid):
     """Un clic: crea la cuenta con lo presupuestado (a toda la familia si el cliente
@@ -762,9 +878,9 @@ def cliente_cuenta_expresa(cid):
     lineas = []
     for m in miembros:
         p = PresupuestoCliente.query.filter_by(cliente_id=m.id, anio_cobro=a.anio_cobro).first()
-        if not p or p.valor <= 0:
+        if not p or p.vigente <= 0:
             return _res(f"{m.nombre} no tiene presupuesto {a.anio_cobro}. Cuenta no creada.", "error")
-        lineas.append((m, p.valor))
+        lineas.append((m, p.vigente))
     cuenta = CuentaCobro(anio_cobro_id=a.id, numero=_numero_libre(a),
                          fecha=date.today(), estado="BORRADOR")
     cuenta.pagador_cliente_id = cli.id
@@ -864,10 +980,10 @@ def grupo_cuenta_expresa(gid):
     lineas = []
     for m in miembros:
         p = PresupuestoCliente.query.filter_by(cliente_id=m.id, anio_cobro=a.anio_cobro).first()
-        if not p or p.valor <= 0:
+        if not p or p.vigente <= 0:
             flash(f"{m.nombre} no tiene presupuesto {a.anio_cobro}. Cuenta no creada.", "error")
             return redirect(destino)
-        lineas.append((m, p.valor))
+        lineas.append((m, p.vigente))
     pagador = g.pagador or miembros[0]
     cuenta = CuentaCobro(anio_cobro_id=a.id, numero=_numero_libre(a),
                          fecha=date.today(), estado="BORRADOR")
@@ -935,7 +1051,8 @@ def cliente_nuevo():
         db.session.flush()
         if a:
             db.session.add(PresupuestoCliente(cliente_id=cli.id, anio_cobro=a.anio_cobro,
-                                              valor=float(f.get("valor") or 0)))
+                                              valor=float(f.get("valor") or 0),
+                                              valor_final=float(f.get("valor") or 0)))
         db.session.commit()
         flash("Cliente creado", "ok")
         return redirect(url_for("main.clientes"))
@@ -966,7 +1083,8 @@ def cliente_detalle(cid):
     historial.sort(key=lambda h: (h["anio"], h["numero"]))
     filas_asesorias, base_asesorias = _asesorias_filas(cli, a)
     total_asesorias = sum(fx["subtotal"] for fx in filas_asesorias)
-    presup_act = next((p.valor for p in presup if p.anio_cobro == (a.anio_cobro if a else None)), 0)
+    presup_act = next((p.vigente for p in presup if p.anio_cobro == (a.anio_cobro if a else None)), 0)
+    presup_prop = next((float(p.valor or 0) for p in presup if p.anio_cobro == (a.anio_cobro if a else None)), 0)
     import json as _json
     datos_js = {
         "base": float(base_asesorias or 0),
@@ -980,13 +1098,20 @@ def cliente_detalle(cid):
                    "base_min": (fx["it"].base_min or ""),
                    "en_maestro": bool(fx["en_maestro"])} for fx in filas_asesorias],
     }
+    objs_ant = ([m for m in cli.grupo.miembros if m.activo]
+                if cli.es_pagador and cli.grupo_id else [cli])
+    cob_ant, pag_ant, anio_ant = (_cobrado_pagado_anterior(a, objs_ant) if a
+                                  else (0.0, 0.0, None))
     return render_template("cliente_detalle.html", cli=cli, presup=presup,
+                           resumen_ant={"cobrado": cob_ant, "pagado": pag_ant,
+                                        "anio": anio_ant},
                            datos_asesorias=_json.dumps(datos_js),
                            historial=historial, a=a,
                            filas_asesorias=filas_asesorias,
                            total_asesorias=total_asesorias,
                            base_asesorias=base_asesorias,
                            presup_act=presup_act or 0,
+                           presup_prop=presup_prop or 0,
                            grupos=GrupoFamiliar.query.order_by(GrupoFamiliar.nombre))
 
 
@@ -1014,10 +1139,10 @@ def cliente_presupuesto_guardar(cid):
     if p is None:
         p = PresupuestoCliente(cliente_id=cid, anio_cobro=a.anio_cobro, valor=0.0)
         db.session.add(p)
-    anterior = float(p.valor or 0)
+    anterior = float(p.vigente or 0)
     if abs(nuevo - anterior) < 0.5:
         return jsonify(ok=False, error="El valor es igual al actual")
-    p.valor = nuevo
+    p.valor_final = nuevo
     db.session.add(PresupuestoHistorial(cliente_id=cid, anio_cobro=a.anio_cobro,
                                         valor_anterior=anterior, valor_nuevo=nuevo,
                                         motivo=motivo[:300], fecha=date.today()))
@@ -1131,7 +1256,7 @@ def cliente_asesorias_confirmar(cid):
     if p is None:
         p = PresupuestoCliente(cliente_id=cid, anio_cobro=a.anio_cobro, valor=0.0)
         db.session.add(p)
-    anterior = float(p.valor or 0)
+    anterior = float(p.vigente or 0)
     ya_historia = (db.session.query(PresupuestoHistorial.id)
                    .filter_by(cliente_id=cid, anio_cobro=a.anio_cobro).first() is not None)
     if not ya_historia and not nota:
@@ -1248,8 +1373,8 @@ def cliente_presupuesto_paquete(cid):
     if p is None:
         p = PresupuestoCliente(cliente_id=cid, anio_cobro=a.anio_cobro, valor=0.0)
         db.session.add(p)
-    anterior = float(p.valor or 0)
-    p.valor = float(total)
+    anterior = float(p.vigente or 0)
+    p.valor_final = float(total)
     cli.renta_base = base
     db.session.add(PresupuestoHistorial(cliente_id=cid, anio_cobro=a.anio_cobro,
                                         valor_anterior=anterior, valor_nuevo=float(total),
@@ -1410,7 +1535,7 @@ def cliente_editar(cid):
             if p is None:
                 p = PresupuestoCliente(cliente_id=cli.id, anio_cobro=a.anio_cobro)
                 db.session.add(p)
-            p.valor = float(valor or 0)
+            p.valor_final = float(valor or 0)
         if cli.es_pagador and cli.grupo_id:
             Cliente.query.filter(Cliente.grupo_id == cli.grupo_id,
                                  Cliente.id != cli.id).update({"es_pagador": False})
@@ -1425,9 +1550,61 @@ def cliente_editar(cid):
 
 
 # ---------------- Grupos familiares ----------------
+def _pagos_miembros_anio():
+    """Estado de pago individual (año activo) para la vista de grupos familiares.
+
+    Devuelve {cliente_id: {"estado": "pagado"|"abono"|"pendiente", "pagado": x, "debe": y}}
+    solo de quienes aparecen en alguna cuenta NO anulada del año. El dinero pagado a
+    una cuenta se reparte proporcionalmente entre sus líneas (valor línea / total);
+    los ajustes también se prorratean así. Cuenta PAGADA o saldo 0 => cada línea
+    cubre su parte completa. Exceso de pago se limita a la parte del miembro."""
+    a = AnioCobro.query.filter_by(activo=True).first()
+    if not a:
+        return {}
+    acc = {}
+    cuentas = (CuentaCobro.query.filter_by(anio_cobro_id=a.id)
+               .filter(CuentaCobro.estado != "ANULADA").all())
+    for cu in cuentas:
+        lineas = [l for l in cu.lineas if l.estado == "ACTIVA"]
+        tot = sum(float(l.valor or 0) for l in lineas)
+        if tot <= 0:
+            continue
+        pagado = float(cu.total_pagado or 0)
+        ajustes = float(cu.total_ajustes or 0)
+        for l in lineas:
+            fr = float(l.valor or 0) / tot
+            parte = max(float(l.valor or 0) - ajustes * fr, 0.0)
+            pag = min(pagado * fr, parte)
+            d = acc.setdefault(l.cliente_id, {"pagado": 0.0, "debe": 0.0})
+            d["debe"] += parte
+            d["pagado"] += pag
+    res = {}
+    for cid, d in acc.items():
+        debe, pag = d["debe"], d["pagado"]
+        if pag >= debe - 0.5:
+            est = "pagado"
+        elif pag > 0.5:
+            est = "abono"
+        else:
+            est = "pendiente"
+        res[cid] = {"estado": est, "pagado": pag, "debe": debe}
+    return res
+
+
 @bp.route("/grupos")
 def grupos():
+    pagos = _pagos_miembros_anio()
+    # estado por grupo para pintar la tarjeta: ok (todos pagaron) / parcial (abonos)
+    estado_grupos = {}
+    for g in GrupoFamiliar.query.all():
+        ests = [pagos[c.id]["estado"] for c in g.miembros if c.id in pagos]
+        if ests and all(e == "pagado" for e in ests):
+            estado_grupos[g.id] = "ok"
+        elif any(e == "abono" for e in ests):
+            estado_grupos[g.id] = "parcial"
     return render_template("grupos.html",
+                           pagos_map=pagos,
+                           estado_grupos=estado_grupos,
                            grupos=GrupoFamiliar.query.order_by(GrupoFamiliar.nombre).all(),
                            clientes_sin_grupo=Cliente.query.filter_by(grupo_id=None, activo=True)
                            .order_by(Cliente.nombre).all())
@@ -1561,7 +1738,7 @@ def cuenta_nueva():
             val = f.get(f"valor_{cid}", "")
             if val == "":
                 p = PresupuestoCliente.query.filter_by(cliente_id=cli.id, anio_cobro=a.anio_cobro).first()
-                val = p.valor if p else 0
+                val = p.vigente if p else 0
             con = (f.get(f"concepto_{cid}", "") or "").strip()
             db.session.add(CuentaLinea(cuenta=cuenta, cliente_id=cli.id, valor=float(val or 0),
                                        concepto=con))
@@ -1578,7 +1755,7 @@ def cuenta_nueva():
     pares = []
     for p in PresupuestoCliente.query.filter_by(anio_cobro=a.anio_cobro).all():
         if p.cliente.activo:
-            pares.append({"cliente": p.cliente, "valor": p.valor})
+            pares.append({"cliente": p.cliente, "valor": p.vigente})
     pares.sort(key=lambda x: x["cliente"].nombre)
     grupos = GrupoFamiliar.query.order_by(GrupoFamiliar.nombre).all()
     pagadores = [p["cliente"] for p in pares]
@@ -1633,7 +1810,7 @@ def cuenta_preview():
         val = f.get(f"valor_{cid}", "")
         if val == "":
             p = PresupuestoCliente.query.filter_by(cliente_id=cli.id, anio_cobro=a.anio_cobro).first()
-            val = p.valor if p else 0
+            val = p.vigente if p else 0
         con = (f.get(f"concepto_{cid}", "") or "").strip()
         lineas.append({"nombre": cli.nombre, "concepto": con, "valor": float(val or 0)})
         if pid and cli.id == pid:
@@ -1668,7 +1845,7 @@ def cuenta_linea_agregar(cid):
         if val == "":
             a = cuenta.anio
             p = PresupuestoCliente.query.filter_by(cliente_id=cid_cli, anio_cobro=a.anio_cobro).first()
-            val = p.valor if p else 0
+            val = p.vigente if p else 0
         con = (f.get("concepto", "") or "").strip()
         db.session.add(CuentaLinea(cuenta_id=cuenta.id, cliente_id=cid_cli, valor=float(val or 0),
                                    concepto=con))
@@ -1900,10 +2077,10 @@ def cuenta_sincronizar_grupo(cid):
             problemas.append(f"{m.nombre} (ya está en {ya.cuenta.numero_formateado})")
             continue
         p = PresupuestoCliente.query.filter_by(cliente_id=m.id, anio_cobro=a.anio_cobro).first()
-        if not p or p.valor <= 0:
+        if not p or p.vigente <= 0:
             problemas.append(f"{m.nombre} (sin presupuesto {a.anio_cobro})")
             continue
-        db.session.add(CuentaLinea(cuenta=cuenta, cliente_id=m.id, valor=p.valor))
+        db.session.add(CuentaLinea(cuenta=cuenta, cliente_id=m.id, valor=p.vigente))
         agregados.append(m.nombre)
     if not agregados:
         msg = "Nada que sincronizar: la cuenta ya tiene a todos los miembros activos del grupo."
@@ -2169,7 +2346,8 @@ def exportar_excel():
     ws = wb.active
     ws.title = "Resumen"
     if a:
-        presup = db.session.query(db.func.coalesce(db.func.sum(PresupuestoCliente.valor), 0.0))\
+        presup = db.session.query(db.func.coalesce(
+            db.func.sum(db.func.coalesce(PresupuestoCliente.valor_final, PresupuestoCliente.valor)), 0.0))\
             .filter_by(anio_cobro=a.anio_cobro).scalar()
         emitido = db.session.query(db.func.coalesce(db.func.sum(CuentaLinea.valor), 0.0))\
             .join(CuentaCobro).filter(CuentaCobro.anio_cobro_id == a.id,
@@ -2233,7 +2411,7 @@ def exportar_excel():
         filas.append((cli.codigo, cli.nombre, cli.tipo, cli.nit, cli.dv, cli.ciudad,
                       cli.telefonos or "", cli.email or "",
                       cli.grupo.nombre if cli.grupo else "", "Sí" if cli.es_pagador else "",
-                      p.valor if p else 0, "Sí" if cli.activo else "No", cli.nota or ""))
+                      p.vigente if p else 0, "Sí" if cli.activo else "No", cli.nota or ""))
     _hoja(ws, ["Código", "Nombre", "Tipo", "CC/NIT", "DV", "Ciudad", "Teléfonos",
                "Email", "Grupo", "Pagador", "Presupuesto", "Activo", "Nota"],
           filas, [8, 38, 6, 14, 5, 12, 14, 28, 22, 9, 13, 8, 30])
@@ -2470,10 +2648,11 @@ def clientes_importar():
                     v = float(val("presupuesto"))
                     p = PresupuestoCliente.query.filter_by(cliente_id=cli.id, anio_cobro=a.anio_cobro).first()
                     if p is None:
-                        p = PresupuestoCliente(cliente_id=cli.id, anio_cobro=a.anio_cobro, valor=v)
+                        p = PresupuestoCliente(cliente_id=cli.id, anio_cobro=a.anio_cobro,
+                                               valor=v, valor_final=v)
                         db.session.add(p)
                     else:
-                        p.valor = v
+                        p.valor_final = v
                     stats["presupuestos"] += 1
                 except (TypeError, ValueError):
                     stats["errores"].append(f"Fila {i}: presupuesto inválido")
@@ -2515,7 +2694,7 @@ def _asesorias_filas(cli, a, maestro_previo=None):
         cod2id = {c.codigo: c.id for c in AsesoriaCatalogo.query.all()}
         datos = {cod2id[k]: v for k, v in bruto.items() if k in cod2id}
     p = PresupuestoCliente.query.filter_by(cliente_id=cli.id, anio_cobro=a.anio_cobro).first()
-    presup = float(p.valor or 0) if p else 0.0
+    presup = float(p.vigente or 0) if p else 0.0
 
     pre = []
     sum_fijas = 0.0
@@ -2638,7 +2817,7 @@ def _estado_asesorias(cli, a):
     presup = 0.0
     if a:
         p = PresupuestoCliente.query.filter_by(cliente_id=cli.id, anio_cobro=a.anio_cobro).first()
-        presup = float(p.valor or 0) if p else 0.0
+        presup = float(p.vigente or 0) if p else 0.0
     total = sum(f["subtotal"] for f in filas)
     delta = presup - total
     if presup <= 0:
@@ -2686,7 +2865,7 @@ def cliente_asesorias_recalcular(cid):
         return jsonify(ok=False, error="No hay año activo")
     filas, _base = _asesorias_filas(cli, a)
     p = PresupuestoCliente.query.filter_by(cliente_id=cli.id, anio_cobro=a.anio_cobro).first()
-    presup = float(p.valor or 0) if p else 0.0
+    presup = float(p.vigente or 0) if p else 0.0
     fijas = sum(f["subtotal"] for f in filas if f["incluir"] and f["fija"])
     sumpct = sum((f["eff_pct"] or 0) for f in filas if f["incluir"] and not f["fija"])
     if sumpct > 0 and presup > 0:
@@ -3168,7 +3347,7 @@ def anio_nuevo():
             else:
                 p = PresupuestoCliente.query.filter_by(cliente_id=cli.id,
                                                        anio_cobro=anterior.anio_cobro).first()
-                base = p.valor if p else None
+                base = p.vigente if p else None
             if base:
                 db.session.add(PresupuestoCliente(cliente_id=cli.id, anio_cobro=anio_cobro,
                                                   valor=round(base * (1 + ipc), -2)))
@@ -3216,4 +3395,4 @@ def importar():
 def api_valor_cliente(cid):
     a = anio_actual()
     p = PresupuestoCliente.query.filter_by(cliente_id=cid, anio_cobro=a.anio_cobro).first() if a else None
-    return jsonify({"valor": p.valor if p else 0})
+    return jsonify({"valor": p.vigente if p else 0})

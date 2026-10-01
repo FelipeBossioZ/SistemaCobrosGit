@@ -588,15 +588,10 @@ def cliente_correo(cid):
         return redirect(destino)
     carpeta = _carpeta_correos()
     ruta_eml = _generar_eml(cuenta, carpeta)
-    if cuenta.estado == "BORRADOR":
-        cuenta.estado = "ENVIADA"
-    if not cuenta.envios.first():
-        db.session.add(Envio(cuenta_id=cuenta.id, medio="Correo", fecha=date.today(),
-                             nota=f"Borrador .eml generado en {carpeta} (para {pagador.email})"))
     db.session.commit()
     if request.accept_mimetypes.best == "application/json":
         return jsonify(ok=True, nombre=os.path.basename(ruta_eml),
-                       mensaje=f"PDF y borrador de correo listos en {carpeta}")
+                       mensaje=f"PDF y borrador de correo listos en {carpeta} (la cuenta queda en BORRADOR)")
     return send_file(ruta_eml, as_attachment=True,
                      download_name=os.path.basename(ruta_eml))
 
@@ -863,15 +858,12 @@ def cliente_cuenta_expresa(cid):
             if pagador and (pagador.email or "").strip():
                 ccorreos = _carpeta_correos()
                 _generar_eml(yacuenta, ccorreos)
-                db.session.add(Envio(cuenta_id=yacuenta.id, medio="Correo", fecha=date.today(),
-                                     nota=f"Borrador .eml generado en {ccorreos} (para {pagador.email})"))
-                yacuenta.estado = "ENVIADA"
                 db.session.commit()
                 return _res(f"{cli.nombre} ya estaba en la cuenta {yacuenta.numero_formateado} (BORRADOR). "
                             f"La completé: PDF y borrador de Outlook (.eml) listos en {ccorreos}")
             return _res(f"{cli.nombre} ya está en la cuenta BORRADOR {yacuenta.numero_formateado}, "
                         f"pero el pagador no tiene correo guardado en su ficha.", "error")
-        sobre = " (con borrador de Outlook ya generado: usa el sobre \u2709\ufe0f)" if yacuenta.envios.first() else ""
+        sobre = ""
         return _res(f"{cli.nombre} ya está en la cuenta {yacuenta.numero_formateado} de este año{sobre}", "error")
     miembros = ([m for m in cli.grupo.miembros if m.activo]
                 if cli.es_pagador and cli.grupo_id else [cli])
@@ -900,9 +892,6 @@ def cliente_cuenta_expresa(cid):
     if pagador and (pagador.email or "").strip():
         ccorreos = _carpeta_correos()
         _generar_eml(cuenta, ccorreos)
-        db.session.add(Envio(cuenta_id=cuenta.id, medio="Correo", fecha=date.today(),
-                             nota=f"Borrador .eml generado en {ccorreos} (para {pagador.email})"))
-        cuenta.estado = "ENVIADA"
         db.session.commit()
         return _res(base + f". Borrador de Outlook (.eml) listo en {ccorreos}")
     return _res(base + ". El pagador no tiene correo guardado: solo quedó el PDF.")
@@ -1004,9 +993,6 @@ def grupo_cuenta_expresa(gid):
     if pagador and (pagador.email or "").strip():
         ccorreos = _carpeta_correos()
         _generar_eml(cuenta, ccorreos)
-        db.session.add(Envio(cuenta_id=cuenta.id, medio="Correo", fecha=date.today(),
-                             nota=f"Borrador .eml generado en {ccorreos} (para {pagador.email})"))
-        cuenta.estado = "ENVIADA"
         db.session.commit()
         flash(base + f". Borrador de Outlook (.eml) listo en {ccorreos}", "ok")
     else:
@@ -1902,6 +1888,49 @@ def cuenta_fecha(cid):
     return redirect(url_for("main.cuenta_detalle", cid=cid))
 
 
+@bp.route("/cuentas/<int:cid>/regenerar", methods=["POST"])
+def cuenta_regenerar(cid):
+    """Boton de la ficha: actualiza el valor de cada linea ACTIVA al presupuesto
+    VIGENTE del cliente (propuesta ajustada con 'Construir desde base' o edicion
+    manual) y regenera el PDF en la misma carpeta con el mismo numero.
+    No registra envios ni cambia el estado."""
+    cuenta = db.get_or_404(CuentaCobro, cid)
+    destino = url_for("main.cuenta_detalle", cid=cid)
+    if cuenta.estado == "ANULADA":
+        flash("Cuenta anulada: no se puede regenerar.", "error")
+        return redirect(destino)
+    a = cuenta.anio
+    cambios, sin_presup = [], []
+    for l in cuenta.lineas:
+        if l.estado != "ACTIVA":
+            continue
+        p = PresupuestoCliente.query.filter_by(cliente_id=l.cliente_id,
+                                              anio_cobro=a.anio_cobro).first()
+        if not p or p.vigente <= 0:
+            sin_presup.append(l.cliente.nombre)
+            continue
+        nuevo = float(p.vigente)
+        viejo = float(l.valor or 0)
+        if abs(nuevo - viejo) > 0.5:
+            l.valor = nuevo
+            cambios.append(f"{l.cliente.nombre}: $ {viejo:,.0f} → $ {nuevo:,.0f}")
+    db.session.commit()
+    carpeta = _carpeta_pdfs()
+    ruta = os.path.join(carpeta, _nombre_pdf(cuenta))
+    generar_pdf(cuenta, ruta)
+    if cambios:
+        msg = "Valores actualizados: " + "; ".join(cambios) + ". "
+    else:
+        msg = "Ningún valor cambió (las líneas ya coinciden con el presupuesto vigente). "
+    msg += f"PDF regenerado en {ruta}. Total $ {cuenta.total:,.0f}."
+    if sin_presup:
+        msg += " Ojo, sin presupuesto vigente para: " + ", ".join(sin_presup)
+    if cuenta.estado != "BORRADOR" or cuenta.envios.count() > 0:
+        msg += " (la cuenta ya fue enviada: verifica que el destinatario reciba la versión nueva)"
+    flash(msg, "ok")
+    return redirect(destino)
+
+
 @bp.route("/cuentas/<int:cid>/enviar", methods=["POST"])
 def cuenta_enviar(cid):
     cuenta = db.get_or_404(CuentaCobro, cid)
@@ -2096,19 +2125,10 @@ def cuenta_sincronizar_grupo(cid):
            + ", ".join(agregados) + f". Nuevo total $ {cuenta.total:,.0f}. PDF regenerado en {ruta}")
     if problemas:
         msg += ". Ojo: " + ", ".join(problemas)
-    hubo_envios = cuenta.envios.count() > 0
-    pag = cuenta.pagador_principal
-    if hubo_envios and pag and (pag.email or "").strip():
-        ccorreos = _carpeta_correos()
-        if _generar_eml(cuenta, ccorreos):
-            db.session.add(Envio(cuenta_id=cuenta.id, medio="Correo", fecha=date.today(),
-                                 nota=f"Borrador .eml regenerado con el grupo completo en {ccorreos} "
-                                      f"(para {pag.email})"))
-            if cuenta.estado == "BORRADOR":
-                cuenta.estado = "ENVIADA"
-            db.session.commit()
-            msg += f". Borrador de Outlook (.eml) regenerado en {ccorreos}"
-    elif not hubo_envios:
+    if cuenta.envios.count() > 0:
+        msg += (" La cuenta ya tenía envíos registrados: el borrador de correo anterior quedó "
+                "desactualizado; genera uno nuevo con 'Redactar correo' si lo necesitas.")
+    else:
         msg += ". La cuenta sigue en BORRADOR: usa 'Redactar correo' cuando quieras y saldrá con el grupo completo."
     flash(msg, "ok")
     return redirect(destino)
@@ -2170,10 +2190,6 @@ def cuenta_outlook(cid):
     carpeta = _carpeta_correos()
     _generar_eml(cuenta, carpeta, extra=request.form.get("correo_extra", ""))
 
-    db.session.add(Envio(cuenta_id=cuenta.id, medio="Correo", fecha=date.today(),
-                         nota=f"Borrador .eml generado en {carpeta} (para {pagador.email})"))
-    if cuenta.estado == "BORRADOR":
-        cuenta.estado = "ENVIADA"
     db.session.commit()
     flash(f"PDF y borrador de correo (.eml) guardados en {carpeta}. "
           "Abre el .eml (doble clic), revisa y envía.", "ok")

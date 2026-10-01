@@ -56,7 +56,15 @@
   <div class="col-lg-7">
     <div class="card mb-4">
       <div class="card-header bg-white fw-semibold d-flex justify-content-between">
-        <span>Líneas de la cuenta</span>
+        <div class="d-flex align-items-center gap-2">Líneas de la cuenta
+          {% if cuenta.estado != 'ANULADA' %}
+          <form method="post" class="m-0 d-inline"
+                action="{{ url_for('main.cuenta_regenerar', cid=cuenta.id) }}">
+            <button class="btn btn-sm btn-outline-secondary py-0 px-1"
+                    title="Actualizar los valores de las líneas con el presupuesto vigente y regenerar el PDF"><i class="bi bi-arrow-repeat"></i></button>
+          </form>
+          {% endif %}
+        </div>
         {% if cuenta.estado != 'ANULADA' %}
         <form class="d-flex gap-1" method="post" action="{{ url_for('main.cuenta_linea_agregar', cid=cuenta.id) }}">
           <select class="form-select form-select-sm" name="cliente_id" required style="width: 280px;">

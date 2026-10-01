@@ -1468,8 +1468,18 @@ def _pagos_miembros_anio():
 
 @bp.route("/grupos")
 def grupos():
+    pagos = _pagos_miembros_anio()
+    # estado por grupo para pintar la tarjeta: ok (todos pagaron) / parcial (abonos)
+    estado_grupos = {}
+    for g in GrupoFamiliar.query.all():
+        ests = [pagos[c.id]["estado"] for c in g.miembros if c.id in pagos]
+        if ests and all(e == "pagado" for e in ests):
+            estado_grupos[g.id] = "ok"
+        elif any(e == "abono" for e in ests):
+            estado_grupos[g.id] = "parcial"
     return render_template("grupos.html",
-                           pagos_map=_pagos_miembros_anio(),
+                           pagos_map=pagos,
+                           estado_grupos=estado_grupos,
                            grupos=GrupoFamiliar.query.order_by(GrupoFamiliar.nombre).all(),
                            clientes_sin_grupo=Cliente.query.filter_by(grupo_id=None, activo=True)
                            .order_by(Cliente.nombre).all())

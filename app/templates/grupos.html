@@ -6,6 +6,18 @@
 <span class="badge bg-info text-dark">pagador</span> a nombre de quién se emite. Dentro de un grupo
 puedes tener subgrupos: simplemente crea otro grupo con los miembros que quieras.</p>
 
+<div class="input-group mb-3" style="max-width: 560px;">
+  <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+  <input id="buscarGrupo" class="form-control" type="search" autocomplete="off"
+         placeholder="Buscar familia o miembro por nombre...">
+</div>
+<div id="sinResultados" class="alert alert-light border d-none small text-muted">
+  Ninguna familia coincide con la búsqueda.</div>
+<style>
+  .grupo-ok { background: #e7f4ea; border-color: #bfe4c8; }
+  .grupo-parcial { background: #fcecef; border-color: #f3cdd4; }
+</style>
+
 <div class="row g-4">
   <div class="col-lg-7">
     <form class="row g-2 mb-3" method="post" action="{{ url_for('main.grupo_nuevo') }}">
@@ -14,7 +26,8 @@ puedes tener subgrupos: simplemente crea otro grupo con los miembros que quieras
     </form>
 
     {% for g in grupos %}
-    <div class="card mb-3">
+    {% set est = estado_grupos.get(g.id) %}
+    <div class="card mb-3 {% if est == 'ok' %}grupo-ok{% elif est == 'parcial' %}grupo-parcial{% endif %}">
       <div class="card-header bg-white d-flex justify-content-between align-items-center">
         <strong class="d-flex align-items-center gap-2 flex-wrap">
           <span id="nombre-grupo-{{ g.id }}">{{ g.nombre }}</span>
@@ -98,7 +111,7 @@ puedes tener subgrupos: simplemente crea otro grupo con los miembros que quieras
         <table class="table table-sm mb-0">
           <tbody>
           {% for cli in clientes_sin_grupo %}
-            <tr><td class="small">{{ cli.nombre }}</td><td></td></tr>
+            <tr class="fila-sin-grupo"><td class="small">{{ cli.nombre }}</td><td></td></tr>
           {% else %}
             <tr><td class="text-muted small p-3">Todos los clientes tienen grupo.</td></tr>
           {% endfor %}
@@ -150,5 +163,31 @@ document.querySelectorAll("form[data-cli]").forEach(function(f){
     f.action = "/grupos/" + sel.value + "/agregar";
   });
 });
+// --- Buscador en vivo: filtra tarjetas de grupos (nombre o miembros) y la lista de sin grupo ---
+var bs = document.getElementById('buscarGrupo');
+if (bs) {
+  bs.addEventListener('input', function(){
+    var q = this.value.toLowerCase().trim(), vis = 0;
+    document.querySelectorAll('.card.mb-3').forEach(function(card){
+      var hay = card.textContent.toLowerCase().includes(q);
+      card.style.display = hay ? '' : 'none';
+      if (hay) vis++;
+    });
+    document.querySelectorAll('.fila-sin-grupo').forEach(function(tr){
+      tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
+    });
+    document.getElementById('sinResultados').classList.toggle('d-none', vis > 0 || !q);
+  });
+}
+// --- Volver al mismo lugar tras cada accion (renombrar, quitar, pagar-switch, etc.) ---
+document.querySelectorAll('form').forEach(function(f){
+  f.addEventListener('submit', function(){
+    try { sessionStorage.setItem('gruposScroll', window.scrollY); } catch(e) {}
+  });
+});
+try {
+  var y = sessionStorage.getItem('gruposScroll');
+  if (y !== null) { window.scrollTo(0, parseInt(y, 10) || 0); sessionStorage.removeItem('gruposScroll'); }
+} catch(e) {}
 </script>
 {% endblock %}

@@ -167,6 +167,11 @@ def _dibujar(c, d):
     caja(c, izq, y - nb, der, y)
     t(c, izq + 10, y - 14, d["pagador_saludo"].upper(), 7, color=GRIS_TXT)
     t(c, izq + 10, y - 31, recortar(c, d["pagador_nombre"], "Helvetica-Bold", 12.5, der - izq - 20), 12.5, bold=True)
+    _cod = str(d.get("pagador_codigo") or "").strip()
+    if _cod:
+        c.setFont("Helvetica", 6.3)
+        c.setFillColor(HexColor("#9b9b9b"))
+        c.drawRightString(der - 12, y - 31, "Ref. " + _cod)
     t(c, izq + 10, y - 47, "C. C. o NIT: " + d["pagador_nit"]
       + ("    ·    Ciudad: " + d["pagador_ciudad"] if d["pagador_saludo"] != "Señores" else ""), 9, color=GRIS_TXT)
     y -= nb + 12
@@ -294,6 +299,7 @@ def _dibujar(c, d):
     tc(c, (W / 2 + 40 + der - 20) / 2, fy - 25, "C.C. o NIT N°: ____________________", 8.5, color=GRIS_TXT)
 
     tc(c, cx, 28, "NOTA: Este documento NO es factura de venta.", 7.5, color=GRIS_TXT)
+    tc(c, cx, 18, "Por favor enviar comprobante de pago para asentar la cancelación de la cuenta de cobro.", 7.5, color=GRIS_TXT)
 
 
 def generar_desde_dict(d, destino):
@@ -327,6 +333,7 @@ def _datos_cuenta(cuenta):
         "pagador_saludo": saludo_de_cliente(pagador),
         "pagador_nit": pagador.nit_formateado if pagador else "",
         "pagador_ciudad": (pagador.ciudad or "MEDELLÍN") if pagador else "MEDELLÍN",
+        "pagador_codigo": (pagador.codigo if pagador else None),
         "concepto_default": anio.concepto_texto,
         "lineas": lineas,
         "ajustes": ajustes,
@@ -345,6 +352,7 @@ def datos_preview(a, lineas, pagador, obs=""):
         "pagador_saludo": saludo_de_cliente(pagador),
         "pagador_nit": pagador.nit_formateado if pagador else "",
         "pagador_ciudad": (pagador.ciudad or "MEDELLÍN") if pagador else "MEDELLÍN",
+        "pagador_codigo": (pagador.codigo if pagador else None),
         "concepto_default": a.concepto_texto,
         "lineas": lineas,
         "ajustes": [],

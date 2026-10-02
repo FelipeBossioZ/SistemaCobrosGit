@@ -12,7 +12,10 @@
   .email-edit:hover { text-decoration: underline !important; }
 </style>
 <div class="d-flex justify-content-between align-items-center mb-3">
-  <h3 class="mb-0">Clientes</h3>
+  <h3 class="mb-0">Clientes
+              <a class="btn btn-sm {{ 'btn-dark' if seccion != 'FACT' else 'btn-outline-secondary' }} ms-2" href="{{ url_for('main.clientes', ver=ver, seccion='CDEC') }}">Ver solo Cuentas de cobro</a>
+              <a class="btn btn-sm {{ 'btn-success' if seccion == 'FACT' else 'btn-outline-secondary' }}" href="{{ url_for('main.clientes', ver=ver, seccion='FACT') }}">Ver solo Facturación</a>
+            </h3>
   <div class="d-flex gap-2">
     <form method="post" action="{{ url_for('main.clientes_asesorias_maestro_todos') }}"
           onsubmit="return confirm('Lee el Sistema Maestro y marca a TODOS los clientes activos sus asesorías presentadas del año (IVA, RF, renta, exógena...). No pisa valores editados. ¿Seguir?');">
@@ -62,7 +65,7 @@
       <th class="num" title="Efectivamente pagado {{ (a.anio_cobro|int - 1) if a }} (Excel del año anterior o edición manual)">Efect. pagado {{ (a.anio_cobro|int - 1) if a }}</th><th></th></tr></thead>
     <tbody>
     {% for cli in clientes %}
-      <tr data-buscar="{{ cli.codigo }} {{ cli.nombre|lower }} {{ cli.nit }} {{ cli.grupo.nombre|lower if cli.grupo }}">
+      <tr data-buscar="{{ cli.codigo }} {{ cli.nombre|lower }} {{ cli.nit }} {{ cli.grupo.nombre|lower if cli.grupo }} {% if (cli.seccion or 'CDEC') == 'FACT' %}fact facturaci{% endif %}">
         <td class="text-muted small">{{ cli.num_orden }}</td><td>{{ cli.codigo }}</td>
         <td>
           <a href="{{ url_for('main.cliente_detalle', cid=cli.id) }}"
@@ -75,6 +78,7 @@
           {% if cli.tareas_pend %}<a role="button" class="tarea-open adv-tarea text-decoration-none" data-cid="{{ cli.id }}" data-nombre="{{ cli.nombre }}"
              title="{{ cli.tareas_pend|length }} tarea(s) pendiente(s) - clic para verlas"><i class="bi bi-exclamation-triangle-fill text-warning"></i></a>{% endif %}
           {% if cli.es_pagador %}<span class="badge bg-info text-dark" title="Pagador del grupo">pagador</span>{% endif %}
+          {% if (cli.seccion or 'CDEC') == 'FACT' %}<span class="badge bg-success" title="Sección facturación: factura electrónica con IVA y retención">FACT</span>{% endif %}
           {% if not cli.activo %}<span class="badge bg-secondary">inactivo</span>{% endif %}
           {% if maestro_check.get(cli.id) == 'sin NIT' %}<span class="badge bg-warning text-dark" title="Este cliente no tiene NIT guardado: el motor no puede buscarlo en el maestro">sin NIT - no en maestro</span>
           {% elif maestro_check.get(cli.id) == 'no_encontrado' %}<span class="badge bg-danger" title="El maestro no muestra obligaciones presentadas para este NIT en el año activo">no encontrado en maestro</span>{% endif %}

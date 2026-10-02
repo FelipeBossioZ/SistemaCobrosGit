@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Secci&oacute;n de {{ cli.nombre }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div>
+    <h3 class="mb-1">{{ cli.nombre }}
+      <span class="badge bg-secondary">c&oacute;d. {{ cli.codigo }}</span>
+      {% if (cli.seccion or 'CDEC') == 'FACT' %}
+        <span class="badge bg-success">FACTURACI&Oacute;N</span>
+      {% else %}
+        <span class="badge bg-dark">CUENTA DE COBRO</span>
+      {% endif %}
+    </h3>
+    <div class="text-muted small">La secci&oacute;n decide en qu&eacute; universo vive el cliente: cuentas de cobro cl&aacute;sicas (CDEC) o facturaci&oacute;n con IVA y retenci&oacute;n (FACT, factura electr&oacute;nica por fuera).</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('main.cliente_detalle', cid=cli.id) }}">Volver a la ficha</a>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header bg-white fw-semibold">Cambiar de secci&oacute;n</div>
+  <div class="card-body">
+    {% if cli.grupo %}
+    <p class="small text-muted mb-2">Este cliente pertenece al grupo <strong>{{ cli.grupo.nombre }}</strong>. Al moverlo, el grupo completo queda en la nueva secci&oacute;n (un grupo nunca se mezcla). Si alg&uacute;n miembro del grupo est&aacute; en la otra secci&oacute;n, el sistema te lo va a bloquear.</p>
+    {% endif %}
+    <form method="post" class="row g-3 align-items-end" onsubmit="return confirm('&iquest;Confirmas el cambio de secci&oacute;n de este cliente?');">
+      <input type="hidden" name="accion" value="mover_seccion">
+      <div class="col-auto">
+        <label class="form-label">Nueva secci&oacute;n</label>
+        <select class="form-select" name="seccion">
+          <option value="CDEC" {{ 'selected' if (cli.seccion or 'CDEC') == 'CDEC' }}>Cuentas de cobro (CDEC)</option>
+          <option value="FACT" {{ 'selected' if (cli.seccion or 'CDEC') == 'FACT' }}>Facturaci&oacute;n (FACT)</option>
+        </select>
+      </div>
+      {% if borradores_n %}
+      <div class="col-auto">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="mover_borradores" value="1" id="mb" checked>
+          <label class="form-check-label" for="mb">Mover tambi&eacute;n sus {{ borradores_n }} cuenta(s) en BORRADOR</label>
+        </div>
+      </div>
+      {% endif %}
+      <div class="col-auto"><button class="btn btn-primary">Guardar secci&oacute;n</button></div>
+    </form>
+    <p class="small text-muted mt-2 mb-0">Las cuentas ENVIADAS o PAGADAS nunca se mueven: quedan como historial del universo donde se emitieron.</p>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header bg-white fw-semibold">Cuentas donde {{ cli.nombre }} es el pagador</div>
+  <div class="table-responsive">
+  <table class="table table-sm mb-0 align-middle">
+    <thead><tr><th>N&ordm;</th><th>Estado</th><th>Secci&oacute;n</th>
+      <th class="num">Base</th><th class="num">IVA</th><th class="num">Retenci&oacute;n</th><th class="num">Total</th>
+      <th style="width: 360px;">Factura electr&oacute;nica</th></tr></thead>
+    <tbody>
+    {% for c in cuentas_pagador %}
+      {% set es_fact = (c.seccion or 'CDEC') == 'FACT' %}
+      {% set tf = c.totales_factura if es_fact else None %}
+      <tr>
+        <td class="fw-semibold">{{ c.numero_formateado }}</td>
+        <td><span class="badge bg-secondary">{{ c.estado }}</span></td>
+        <td>{% if es_fact %}<span class="badge bg-success">FACT</span>{% else %}<span class="badge bg-dark">CDEC</span>{% endif %}</td>
+        {% if tf %}
+        <td class="num">{{ tf.base|money }}</td>
+        <td class="num">{{ tf.iva|money }} <span class="text-muted small">({{ tf.iva_pct }}%)</span></td>
+        <td class="num text-danger">-{{ tf.rf|money }} <span class="text-muted small">({{ tf.rf_pct }}%)</span></td>
+        <td class="num fw-bold">{{ tf.total|money }}</td>
+        <td>
+          <form method="post" class="row g-1 align-items-center">
+            <input type="hidden" name="accion" value="datos_cuenta">
+            <input type="hidden" name="cuenta_id" value="{{ c.id }}">
+            <div class="col-5"><input class="form-control form-control-sm" name="folio" value="{{ c.folio_factura or '' }}" placeholder="folio factura (ej: FES-12345)"></div>
+            <div class="col-3"><input class="form-control form-control-sm" name="iva" type="number" step="0.1" min="0" max="100" value="{{ c.pct_iva if c.pct_iva is not none else iva_def }}" title="% IVA"></div>
+            <div class="col-2"><input class="form-control form-control-sm" name="rf" type="number" step="0.1" min="0" max="100" value="{{ c.pct_rf if c.pct_rf is not none else rf_def }}" title="% retenci&oacute;n"></div>
+            <div class="col-2"><button class="btn btn-sm btn-outline-primary w-100" title="Guardar folio y porcentajes"><i class="bi bi-check-lg"></i></button></div>
+          </form>
+        </td>
+        {% else %}
+        <td class="num">{{ c.total|money }}</td><td class="num">&mdash;</td><td class="num">&mdash;</td><td class="num">{{ (c.total - c.total_ajustes)|money }}</td>
+        <td class="text-muted small">Cuenta de cobro cl&aacute;sica: no lleva IVA ni retenci&oacute;n.</td>
+        {% endif %}
+      </tr>
+    {% else %}
+      <tr><td colspan="8" class="text-muted p-3">Este cliente no es pagador de ninguna cuenta todav&iacute;a.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endblock %}

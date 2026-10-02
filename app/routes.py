@@ -12,7 +12,7 @@ from flask import (Blueprint, render_template, request, redirect, url_for,
 
 from .models import (db, Parametro, AnioCobro, GrupoFamiliar, Cliente,
                      PresupuestoCliente, CuentaCobro, CuentaLinea, Envio,
-                     Ajuste, Pago, ESTADOS, TrabajoAdicional, saludo_de_cliente,
+                     Ajuste, Pago, ESTADOS, TrabajoAdicional, SECCIONES, IVA_DEFAULT, RF_DEFAULT, saludo_de_cliente,
                      AsesoriaCatalogo, AsesoriaCliente, PresupuestoHistorial,
                      Tarea)
 from .pdf_generator import generar_pdf, ruta_pdf
@@ -238,6 +238,9 @@ def clientes():
     else:
         query = query.filter_by(activo=True)
     lista = query.order_by(Cliente.nombre).all()
+    seccion_filtro = request.args.get("seccion", "")
+    if seccion_filtro in SECCIONES:
+        lista = [c for c in lista if (c.seccion or "CDEC") == seccion_filtro]
     if ver == "cobrables":
         lista = [c for c in lista if c.puede_cobrarse]
     # numero de orden en la vista (1..N) para la columna #: solo cuenta clientes visibles.
@@ -369,7 +372,7 @@ def clientes():
     previo_sin_emitir = len(previo_todo) - len(previo_audit)
     return render_template("clientes.html", clientes=lista, ver=ver,
                            presup=presup, a=a, correos=correos,
-                           estados_cobro=estados_cobro, pagado_actual=pagado_actual,
+                           estados_cobro=estados_cobro, pagado_actual=pagado_actual, seccion=seccion_filtro,
                            cob_ant_h=cob_ant_h, pag_ant_h=pag_ant_h,
                            maestro_check=maestro_check, previo_audit=previo_audit,
                            previo_sin_emitir=previo_sin_emitir,
@@ -874,7 +877,8 @@ def cliente_cuenta_expresa(cid):
             return _res(f"{m.nombre} no tiene presupuesto {a.anio_cobro}. Cuenta no creada.", "error")
         lineas.append((m, p.vigente))
     cuenta = CuentaCobro(anio_cobro_id=a.id, numero=_numero_libre(a),
-                         fecha=date.today(), estado="BORRADOR")
+                         fecha=date.today(), estado="BORRADOR",
+                         seccion=(cli.seccion or "CDEC"))
     cuenta.pagador_cliente_id = cli.id
     db.session.add(cuenta)
     db.session.flush()
@@ -975,7 +979,8 @@ def grupo_cuenta_expresa(gid):
         lineas.append((m, p.vigente))
     pagador = g.pagador or miembros[0]
     cuenta = CuentaCobro(anio_cobro_id=a.id, numero=_numero_libre(a),
-                         fecha=date.today(), estado="BORRADOR")
+                         fecha=date.today(), estado="BORRADOR",
+                         seccion=(g.seccion_real or "CDEC"))
     cuenta.pagador_cliente_id = pagador.id
     db.session.add(cuenta)
     db.session.flush()
@@ -1032,6 +1037,7 @@ def cliente_nuevo():
             email=f.get("email", "").strip(),
             grupo_id=int(f["grupo_id"]) if f.get("grupo_id") else None,
             nota=f.get("nota", "").strip(),
+            seccion=f.get("seccion") if f.get("seccion") in SECCIONES else "CDEC",
         )
         db.session.add(cli)
         db.session.flush()
@@ -1515,6 +1521,31 @@ def cliente_editar(cid):
         cli.es_pagador = bool(f.get("es_pagador"))
         cli.nota = f.get("nota", "").strip()
         cli.activo = bool(f.get("activo"))
+        # seccion CDEC/FACT: grupo homogeneo; borradores solo si el usuario lo marca
+        nueva_sec = f.get("seccion") if f.get("seccion") in SECCIONES else None
+        if nueva_sec and nueva_sec != (cli.seccion or "CDEC"):
+            if cli.grupo_id:
+                g_ = db.session.get(GrupoFamiliar, cli.grupo_id)
+                otros = [mi for mi in g_.miembros if mi.id != cli.id] if g_ else []
+                if otros and any((mi.seccion or "CDEC") != nueva_sec for mi in otros):
+                    flash("El grupo tiene miembros en la otra seccion: un grupo completo es de una sola "
+                          "seccion. Mueve todo el grupo desde la ficha (boton Seccion / Facturacion) o "
+                          "saca primero a los miembros de la otra seccion.", "error")
+                    return redirect(url_for("main.cliente_editar", cid=cli.id))
+            cli.seccion = nueva_sec
+            if cli.grupo_id:
+                db.session.get(GrupoFamiliar, cli.grupo_id).seccion = nueva_sec
+            borr = [l.cuenta for l in CuentaLinea.query.join(CuentaCobro).filter(
+                CuentaLinea.cliente_id == cli.id, CuentaLinea.estado == "ACTIVA",
+                CuentaCobro.estado == "BORRADOR").all() if l.cuenta]
+            if borr and request.form.get("mover_borradores") == "1":
+                for cta_ in borr:
+                    cta_.seccion = nueva_sec
+                flash("Seccion cambiada a %s. %d cuenta(s) en BORRADOR movida(s) tambien." % (nueva_sec, len(borr)), "ok")
+            elif borr:
+                flash("Seccion cambiada a %s. OJO: %d cuenta(s) en BORRADOR siguen en la seccion anterior." % (nueva_sec, len(borr)), "ok")
+            else:
+                flash("Seccion cambiada a " + nueva_sec, "ok")
         valor = f.get("valor")
         if a and valor not in (None, ""):
             p = PresupuestoCliente.query.filter_by(cliente_id=cli.id, anio_cobro=a.anio_cobro).first()
@@ -1588,19 +1619,26 @@ def grupos():
             estado_grupos[g.id] = "ok"
         elif any(e == "abono" for e in ests):
             estado_grupos[g.id] = "parcial"
+    _sec = request.args.get("seccion")
+    _gs = GrupoFamiliar.query.order_by(GrupoFamiliar.nombre).all()
+    if _sec in SECCIONES:
+        _gs = [g for g in _gs if g.seccion_real == _sec]
+    _sin = [c for c in Cliente.query.filter_by(grupo_id=None, activo=True)
+            .order_by(Cliente.nombre).all()
+            if not _sec or (c.seccion or "CDEC") == _sec]
     return render_template("grupos.html",
                            pagos_map=pagos,
                            estado_grupos=estado_grupos,
-                           grupos=GrupoFamiliar.query.order_by(GrupoFamiliar.nombre).all(),
-                           clientes_sin_grupo=Cliente.query.filter_by(grupo_id=None, activo=True)
-                           .order_by(Cliente.nombre).all())
+                           grupos=_gs,
+                           clientes_sin_grupo=_sin)
 
 
 @bp.route("/grupos/nuevo", methods=["POST"])
 def grupo_nuevo():
     nombre = request.form.get("nombre", "").strip()
     if nombre:
-        g = GrupoFamiliar(nombre=nombre.upper())
+        sec = request.form.get("seccion") if request.form.get("seccion") in SECCIONES else "CDEC"
+        g = GrupoFamiliar(nombre=nombre.upper(), seccion=sec)
         db.session.add(g)
         db.session.commit()
         flash("Grupo creado", "ok")
@@ -1627,6 +1665,17 @@ def grupo_agregar(gid):
     cli = db.session.get(Cliente, cid)
     g = db.session.get(GrupoFamiliar, gid)
     if cli and g:
+        sec_cli = cli.seccion or "CDEC"
+        secs = {(mi.seccion or "CDEC") for mi in g.miembros}
+        if secs and (secs != {sec_cli} or (g.seccion or "CDEC") not in ("", None, sec_cli)):
+            msg = ("Grupo mixto NO permitido: %s es de seccion %s y el grupo es %s. "
+                   "Un grupo completo es de una sola seccion." % (cli.nombre, sec_cli, g.seccion or "CDEC"))
+            if request.accept_mimetypes.best == "application/json":
+                from flask import jsonify
+                return jsonify(ok=False, error=msg)
+            flash(msg, "error")
+            return redirect(url_for("main.grupos"))
+        g.seccion = sec_cli
         cli.grupo_id = g.id
         if data.get("pagador") or request.form.get("pagador"):
             Cliente.query.filter(Cliente.grupo_id == g.id).update({"es_pagador": False})
@@ -1673,12 +1722,15 @@ def cuentas():
     if not a:
         return redirect(url_for("main.dashboard"))
     estado = request.args.get("estado", "")
+    seccion = request.args.get("seccion", "")
     query = a.cuentas
     if estado:
         query = query.filter_by(estado=estado)
+    if seccion in SECCIONES:
+        query = query.filter_by(seccion=seccion)
     return render_template("cuentas.html", a=a,
                            cuentas=query.order_by(CuentaCobro.numero).all(),
-                           estado=estado, estados=ESTADOS)
+                           estado=estado, estados=ESTADOS, seccion=seccion)
 
 
 def _cuenta_activa_de(cliente_id, anio_id):
@@ -1698,6 +1750,14 @@ def cuenta_nueva():
         return redirect(url_for("main.dashboard"))
     if request.method == "POST":
         f = request.form
+        sel_cli = [db.session.get(Cliente, int(c)) for c in request.form.getlist("clientes")]
+        sel_cli = [c for c in sel_cli if c]
+        secs_sel = {(c.seccion or "CDEC") for c in sel_cli}
+        if len(secs_sel) > 1:
+            flash("No se puede mezclar secciones en una cuenta (Cuentas de cobro vs Facturacion). "
+                  "Crea una cuenta por cada seccion.", "error")
+            return redirect(url_for("main.cuenta_nueva"))
+        seccion = (secs_sel or {"CDEC"}).pop()
         duplicados = []
         for cid_sel in request.form.getlist("clientes"):
             try:
@@ -1714,7 +1774,7 @@ def cuenta_nueva():
                   + ", ".join(duplicados), "error")
             return redirect(url_for("main.cuenta_nueva"))
         cuenta = CuentaCobro(anio_cobro_id=a.id, numero=_numero_libre(a),
-                             fecha=date.today(), estado="BORRADOR")
+                             fecha=date.today(), estado="BORRADOR", seccion=seccion)
         db.session.add(cuenta)
         db.session.flush()
         for cid in request.form.getlist("clientes"):
@@ -3262,6 +3322,76 @@ def _inyectar_tarifario():
         }
     except Exception:
         return {"estratos_tarifa": [], "catalogo_tarifa": []}
+
+
+@bp.route("/clientes/<int:cid>/seccion", methods=["GET", "POST"])
+def cliente_seccion(cid):
+    """Revision de seccion CDEC<->FACT (con protecciones de grupo y borradores) y,
+    para cuentas de FACTURACION donde el cliente es pagador: folio de la factura
+    electronica + % IVA / % retencion (por defecto vienen de Parametros)."""
+    cli = db.get_or_404(Cliente, cid)
+    if request.method == "POST":
+        acc = request.form.get("accion", "")
+        if acc == "datos_cuenta":
+            try:
+                cta = db.session.get(CuentaCobro, int(request.form.get("cuenta_id") or 0))
+            except (TypeError, ValueError):
+                cta = None
+            if cta:
+                cta.folio_factura = (request.form.get("folio") or "").strip()
+                v = request.form.get("iva")
+                try:
+                    cta.pct_iva = float(v) if v not in (None, "") else IVA_DEFAULT
+                except (TypeError, ValueError):
+                    pass
+                v = request.form.get("rf")
+                try:
+                    cta.pct_rf = float(v) if v not in (None, "") else RF_DEFAULT
+                except (TypeError, ValueError):
+                    pass
+                db.session.commit()
+                flash("Datos de facturacion guardados para " + cta.numero_formateado, "ok")
+        elif acc == "mover_seccion":
+            nueva = request.form.get("seccion")
+            if nueva in SECCIONES and nueva != (cli.seccion or "CDEC"):
+                if cli.grupo_id:
+                    g_ = db.session.get(GrupoFamiliar, cli.grupo_id)
+                    otros = [mi for mi in g_.miembros if mi.id != cli.id] if g_ else []
+                    if otros and any((mi.seccion or "CDEC") != nueva for mi in otros):
+                        flash("El grupo tiene miembros en la otra seccion: un grupo completo es de "
+                              "una sola seccion. Primero saca a los miembros de la otra seccion.", "error")
+                        return redirect(url_for("main.cliente_seccion", cid=cli.id))
+                cli.seccion = nueva
+                if cli.grupo_id:
+                    db.session.get(GrupoFamiliar, cli.grupo_id).seccion = nueva
+                borr = [l.cuenta for l in CuentaLinea.query.join(CuentaCobro).filter(
+                    CuentaLinea.cliente_id == cli.id, CuentaLinea.estado == "ACTIVA",
+                    CuentaCobro.estado == "BORRADOR").all() if l.cuenta]
+                if borr and request.form.get("mover_borradores") == "1":
+                    for cta_ in borr:
+                        cta_.seccion = nueva
+                    flash("Seccion cambiada a %s. %d cuenta(s) en BORRADOR movida(s) tambien." % (nueva, len(borr)), "ok")
+                elif borr:
+                    flash("Seccion cambiada a %s. %d cuenta(s) en BORRADOR siguen en la seccion anterior." % (nueva, len(borr)), "ok")
+                else:
+                    flash("Seccion cambiada a " + nueva, "ok")
+                db.session.commit()
+        return redirect(url_for("main.cliente_seccion", cid=cli.id))
+    ctas = (CuentaCobro.query.filter(CuentaCobro.estado != "ANULADA")
+            .order_by(CuentaCobro.id.desc()).all())
+    cuentas_pagador = [c for c in ctas
+                       if c.pagador_principal and c.pagador_principal.id == cli.id][:15]
+    borradores_n = CuentaLinea.query.join(CuentaCobro).filter(
+        CuentaLinea.cliente_id == cli.id, CuentaLinea.estado == "ACTIVA",
+        CuentaCobro.estado == "BORRADOR").count()
+    if Parametro.get("fact_iva_default", "") == "":
+        Parametro.set("fact_iva_default", str(IVA_DEFAULT))
+    if Parametro.get("fact_rf_default", "") == "":
+        Parametro.set("fact_rf_default", str(RF_DEFAULT))
+    db.session.commit()
+    return render_template("cliente_seccion.html", cli=cli,
+                           cuentas_pagador=cuentas_pagador, borradores_n=borradores_n,
+                           iva_def=IVA_DEFAULT, rf_def=RF_DEFAULT)
 
 
 @bp.route("/tarifario", methods=["GET", "POST"])

@@ -7,6 +7,11 @@ db = SQLAlchemy()
 
 # Estados de una Cuenta de Cobro
 ESTADOS = ("BORRADOR", "ENVIADA", "PAGADA", "ANULADA")
+# Secciones del sistema: CDEC = cuentas de cobro (clasicas) | FACT = facturacion
+# (clientes con IVA y retencion, factura electronica por fuera, resumen separado).
+SECCIONES = ("CDEC", "FACT")
+IVA_DEFAULT = 19.0   # % IVA por defecto en facturacion (parametrizable)
+RF_DEFAULT = 11.0    # % retencion en la fuente por defecto (parametrizable)
 
 
 class Parametro(db.Model):
@@ -70,7 +75,18 @@ class GrupoFamiliar(db.Model):
     nombre = db.Column(db.String(150), nullable=False)
     nota = db.Column(db.String(300), default="")
 
+    seccion = db.Column(db.String(4), default="CDEC")         # un grupo es de UNA sola seccion
+
     miembros = db.relationship("Cliente", backref="grupo", lazy="dynamic")
+
+    @property
+    def seccion_real(self):
+        """Seccion del grupo; si el campo viene vacio (BD vieja) manda el primer miembro."""
+        if self.seccion:
+            return self.seccion
+        for mi in self.miembros:
+            return mi.seccion or "CDEC"
+        return "CDEC"
 
     @property
     def pagador(self):
@@ -102,6 +118,7 @@ class Cliente(db.Model):
     decl_renta = db.Column(db.String(12), default="")            # ""=sin dato, NO_OBLIGADO, PRESENTADA
     renta_base = db.Column(db.Float)                             # base confirmada del paquete (None = derivar del presupuesto)
 
+    seccion = db.Column(db.String(4), default="CDEC")            # CDEC | FACT (universo del cliente)
     grupo_id = db.Column(db.Integer, db.ForeignKey("grupos_familiares.id"))
     es_pagador = db.Column(db.Boolean, default=False)            # a nombre de quién sale la cuenta del grupo
     trato = db.Column(db.String(10), default="")                 # "" = automático, "SR", "SRA"
@@ -302,6 +319,11 @@ class CuentaCobro(db.Model):
     ajustes = db.relationship("Ajuste", backref="cuenta", lazy="dynamic",
                               cascade="all, delete-orphan")
 
+    seccion = db.Column(db.String(4), default="CDEC")          # sello al crear: la cuenta no migra de universo
+    folio_factura = db.Column(db.String(60), default="")       # FACT: numero de la factura electronica ya expedida
+    pct_iva = db.Column(db.Float)                              # FACT: % IVA (None = default de parametros)
+    pct_rf = db.Column(db.Float)                               # FACT: % retencion en la fuente (None = default)
+
     __table_args__ = (db.UniqueConstraint("anio_cobro_id", "numero", name="uq_numero_cuenta"),)
 
     @property
@@ -314,6 +336,11 @@ class CuentaCobro(db.Model):
         return sum(l.valor for l in self.lineas if l.estado != "ANULADA")
 
     @property
+    def subtotal(self):
+        """Base antes de IVA/retencion: lineas activas menos ajustes."""
+        return self.total - self.total_ajustes
+
+    @property
     def total_pagado(self):
         return sum(p.valor for p in self.pagos)
 
@@ -324,6 +351,17 @@ class CuentaCobro(db.Model):
     @property
     def saldo(self):
         return self.total - self.total_ajustes - self.total_pagado
+
+    @property
+    def totales_factura(self):
+        """Totales para cuentas de FACTURACION: base -> IVA -> retencion -> total."""
+        base = self.subtotal
+        iva_p = self.pct_iva if self.pct_iva is not None else iva_default_pct()
+        rf_p = self.pct_rf if self.pct_rf is not None else rf_default_pct()
+        iva = round(base * iva_p / 100.0, 2)
+        rf = round(base * rf_p / 100.0, 2)
+        return {"base": base, "iva_pct": iva_p, "iva": iva,
+                "rf_pct": rf_p, "rf": rf, "total": round(base + iva - rf, 2)}
 
     @property
     def ultimo_envio(self):
@@ -457,3 +495,19 @@ class EstratoTarifa(db.Model):
     valor = db.Column(db.Float)              # None = espeja la Minima Especial
     factor = db.Column(db.Float)             # None = no escala con la Basica
     activo = db.Column(db.Boolean, default=True)
+
+
+def iva_default_pct():
+    """% IVA por defecto para cuentas de facturacion (parametrizable)."""
+    try:
+        return float(Parametro.get("fact_iva_default", str(IVA_DEFAULT)))
+    except (TypeError, ValueError):
+        return IVA_DEFAULT
+
+
+def rf_default_pct():
+    """% retencion en la fuente por defecto (parametrizable)."""
+    try:
+        return float(Parametro.get("fact_rf_default", str(RF_DEFAULT)))
+    except (TypeError, ValueError):
+        return RF_DEFAULT

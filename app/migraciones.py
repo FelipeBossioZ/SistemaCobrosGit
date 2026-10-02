@@ -10,7 +10,28 @@ def ejecutar(db):
         if cols_pr and "valor_final" not in cols_pr:
             con.execute(text("ALTER TABLE presupuestos ADD COLUMN valor_final FLOAT"))
             con.commit()
+        # Facturacion (fase 1): seccion en grupos/clientes/cuentas + folio + pct IVA/RF
+        cols_gr = {r[1] for r in con.execute(text("PRAGMA table_info(grupos_familiares)"))}
+        if cols_gr and "seccion" not in cols_gr:
+            con.execute(text("ALTER TABLE grupos_familiares ADD COLUMN seccion VARCHAR(4) DEFAULT 'CDEC'"))
+            con.commit()
+        cols_ct = {r[1] for r in con.execute(text("PRAGMA table_info(cuentas_cobro)"))}
+        if cols_ct and "seccion" not in cols_ct:
+            con.execute(text("ALTER TABLE cuentas_cobro ADD COLUMN seccion VARCHAR(4) DEFAULT 'CDEC'"))
+            con.commit()
+        if cols_ct and "folio_factura" not in cols_ct:
+            con.execute(text("ALTER TABLE cuentas_cobro ADD COLUMN folio_factura VARCHAR(60) DEFAULT ''"))
+            con.commit()
+        if cols_ct and "pct_iva" not in cols_ct:
+            con.execute(text("ALTER TABLE cuentas_cobro ADD COLUMN pct_iva FLOAT"))
+            con.commit()
+        if cols_ct and "pct_rf" not in cols_ct:
+            con.execute(text("ALTER TABLE cuentas_cobro ADD COLUMN pct_rf FLOAT"))
+            con.commit()
         cols = {r[1] for r in con.execute(text("PRAGMA table_info(clientes)"))}
+        if cols and "seccion" not in cols:
+            con.execute(text("ALTER TABLE clientes ADD COLUMN seccion VARCHAR(4) DEFAULT 'CDEC'"))
+            con.commit()
         if "cobrado_anterior_real" not in cols:
             con.execute(text("ALTER TABLE clientes ADD COLUMN cobrado_anterior_real NUMERIC DEFAULT 0"))
             con.commit()

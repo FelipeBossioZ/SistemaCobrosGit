@@ -22,6 +22,12 @@ puedes tener subgrupos: simplemente crea otro grupo con los miembros que quieras
 <div class="row g-4">
   <div class="col-lg-7">
     <form class="row g-2 mb-3" method="post" action="{{ url_for('main.grupo_nuevo') }}">
+      <div class="col-auto">
+        <select class="form-select" name="seccion" title="Un grupo completo es de una sola sección">
+          <option value="CDEC">Cuentas de cobro</option>
+          <option value="FACT">Facturaci&oacute;n</option>
+        </select>
+      </div>
       <div class="col"><input class="form-control" name="nombre" placeholder="Nombre del grupo (ej: G26 o FAMILIA RESTREPO POSADA)" required></div>
       <div class="col-auto"><button class="btn btn-primary"><i class="bi bi-plus-lg"></i> Crear grupo</button></div>
     </form>
@@ -40,6 +46,7 @@ puedes tener subgrupos: simplemente crea otro grupo con los miembros que quieras
           <button type="button" class="btn btn-sm btn-outline-secondary py-0" title="Renombrar grupo (Enter guarda, Esc cancela)"
                   onclick="empezarRenombrar({{ g.id }})"><i class="bi bi-pencil"></i></button>
           <span class="badge bg-light text-dark">{{ g.miembros.count() }} miembros</span>
+            {% if g.seccion_real == 'FACT' %}<span class="badge bg-success">FACT</span>{% endif %}
           {% set faltan = g.miembros|selectattr('decl_ok', 'equalto', False)|list %}
           {% if faltan %}<span class="badge bg-warning text-dark"
               title="Faltan declaraciones de: {{ faltan|map(attribute='nombre')|join(', ') }}">sin cobrar</span>
@@ -73,6 +80,7 @@ puedes tener subgrupos: simplemente crea otro grupo con los miembros que quieras
               <a href="{{ url_for('main.cliente_detalle', cid=cli.id) }}">{{ cli.nombre }}</a>
               {% if cli.es_pagador %}<span class="badge bg-info text-dark">pagador · sale a su nombre</span>{% endif %}
               {% if not cli.decl_ok %}<span class="badge bg-warning text-dark">falta renta</span>{% endif %}
+              {% if (cli.seccion or 'CDEC') == 'FACT' %}<span class="badge bg-success">FACT</span>{% endif %}
               {% set p = pagos_map.get(cli.id) %}
               {% if p and p.estado == 'pagado' %}
               <span class="badge bg-success" title="Su parte en las cuentas de este año: {{ p.pagado|money }} de {{ p.debe|money }}"><i class="bi bi-check-circle-fill"></i> pagó</span>
@@ -112,7 +120,7 @@ puedes tener subgrupos: simplemente crea otro grupo con los miembros que quieras
         <table class="table table-sm mb-0">
           <tbody>
           {% for cli in clientes_sin_grupo %}
-            <tr class="fila-sin-grupo"><td class="small">{{ cli.nombre }}</td><td></td></tr>
+            <tr class="fila-sin-grupo"><td class="small">{{ cli.nombre }}{% if (cli.seccion or 'CDEC') == 'FACT' %} <span class="badge bg-success">FACT</span>{% endif %}</td><td></td></tr>
           {% else %}
             <tr><td class="text-muted small p-3">Todos los clientes tienen grupo.</td></tr>
           {% endfor %}
@@ -127,7 +135,7 @@ puedes tener subgrupos: simplemente crea otro grupo con los miembros que quieras
             <div class="col-auto">
               <select class="form-select form-select-sm" name="gid_sel" required>
                 <option value="" disabled selected>grupo...</option>
-                {% for g in grupos %}<option value="{{ g.id }}">{{ g.nombre }}</option>{% endfor %}
+                {% for g in grupos %}{% if (cli.seccion or 'CDEC') == g.seccion_real %}<option value="{{ g.id }}">{{ g.nombre }}</option>{% endif %}{% endfor %}
               </select>
             </div>
             <div class="col-auto form-check">

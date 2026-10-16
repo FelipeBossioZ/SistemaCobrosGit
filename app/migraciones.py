@@ -66,6 +66,17 @@ def ejecutar(db):
         if "renta_base" not in cols:
             con.execute(text("ALTER TABLE clientes ADD COLUMN renta_base FLOAT"))
         con.commit()
+        # Adicionales de cuenta (saldos extra que no tocan presupuesto)
+        _tbls = {r[0] for r in con.execute(text(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='adicionales_cuenta'"))}
+        if "adicionales_cuenta" not in _tbls:
+            con.execute(text("CREATE TABLE adicionales_cuenta ("
+                             "id INTEGER PRIMARY KEY, "
+                             "cuenta_id INTEGER NOT NULL REFERENCES cuentas_cobro (id), "
+                             "fecha DATE, valor FLOAT, "
+                             "descripcion VARCHAR(300) DEFAULT '', "
+                             "creado DATETIME)"))
+            con.commit()
         # Tarifario: estratos de renta por patrimonio neto (guia editable)
         con.execute(text("""CREATE TABLE IF NOT EXISTS estratos_tarifa (
             id INTEGER PRIMARY KEY,

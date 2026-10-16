@@ -153,6 +153,7 @@ def _dibujar(c, d):
     emisor = d["emisor"]
     lineas = d["lineas"]
     ajustes = d["ajustes"]
+    adicionales = d.get("adicionales", [])
     concepto_default = d["concepto_default"]
 
     # ---------- 1. Encabezado morado ----------
@@ -169,8 +170,8 @@ def _dibujar(c, d):
     t(c, izq + 10, y - 31, recortar(c, d["pagador_nombre"], "Helvetica-Bold", 12.5, der - izq - 20), 12.5, bold=True)
     _cod = str(d.get("pagador_codigo") or "").strip()
     if _cod:
-        c.setFont("Helvetica", 6.3)
-        c.setFillColor(HexColor("#9b9b9b"))
+        c.setFont("Helvetica-Bold", 8)
+        c.setFillColor(HexColor("#3d3d3d"))
         c.drawRightString(der - 12, y - 31, "Ref. " + _cod)
     t(c, izq + 10, y - 47, "C. C. o NIT: " + d["pagador_nit"]
       + ("    ·    Ciudad: " + d["pagador_ciudad"] if d["pagador_saludo"] != "Señores" else ""), 9, color=GRIS_TXT)
@@ -200,7 +201,10 @@ def _dibujar(c, d):
     hay_conceptos = [l for l in lineas if l["concepto"] and l["concepto"] != concepto_default]
     n_rows = sum(rh2 if l in hay_conceptos else rh for l in lineas)
     mostrar_ajustes = bool(ajustes)
-    th = hh + n_rows + (rh * (1 + len(ajustes)) if mostrar_ajustes else 0) + rh
+    mostrar_adicionales = bool(adicionales)
+    th = hh + n_rows \
+        + (rh * (1 + len(ajustes)) if mostrar_ajustes else 0) \
+        + (rh * len(adicionales) if mostrar_adicionales else 0) + rh
 
     caja(c, izq, y - th, der, y)
     caja(c, izq, y - hh, der, y, fill=MORADO_OSC)
@@ -229,10 +233,19 @@ def _dibujar(c, d):
         for aj in ajustes:
             caja(c, izq, ry - rh, der, ry)
             c.line(x_div, ry - rh, x_div, ry)
-            t(c, izq + 10, ry - 16, recortar(c, "DESCUENTO — " + aj["motivo"], "Helvetica", 9, x_div - izq - 20), 9, color=GRIS_TXT)
+            #------------------------------------DESCUENTO — -----------------------------
+            t(c, izq + 10, ry - 16, recortar(c, "" + aj["motivo"], "Helvetica", 9, x_div - izq - 20), 9, color=GRIS_TXT)
             tr(c, x_div + (der - x_div) / 2, ry - 16, "-" + fmt(abs(aj["valor"])), 9.5, color=GRIS_TXT)
             ry -= rh
-    total = sum(l["valor"] for l in lineas) - (sum(a["valor"] for a in ajustes) if mostrar_ajustes else 0)
+    for ad in adicionales:
+        caja(c, izq, ry - rh, der, ry)
+        c.line(x_div, ry - rh, x_div, ry)
+        t(c, izq + 10, ry - 16, recortar(c, "" + ad["descripcion"], "Helvetica", 9, x_div - izq - 20), 9)
+        tr(c, x_div + (der - x_div) / 2, ry - 16, "" + fmt(abs(ad["valor"])), 9.5)
+        ry -= rh
+    total = (sum(l["valor"] for l in lineas)
+             - (sum(a["valor"] for a in ajustes) if mostrar_ajustes else 0)
+             + (sum(ad["valor"] for ad in adicionales) if mostrar_adicionales else 0))
     caja(c, izq, ry - rh, der, ry, fill=GRIS_CLARO)
     c.line(x_div, ry - rh, x_div, ry)
     t(c, izq + 10, ry - 16.5, "TOTAL A PAGAR", 10, bold=True)
@@ -326,6 +339,8 @@ def _datos_cuenta(cuenta):
         lineas.append({"nombre": lin.cliente.nombre, "concepto": con, "valor": lin.valor})
     ajustes = [{"motivo": a.motivo or "Descuento", "valor": a.valor}
                for a in cuenta.ajustes if a.valor]
+    adicionales = [{"descripcion": ad.descripcion or "Cobro adicional", "valor": float(ad.valor or 0)}
+                   for ad in cuenta.adicionales if ad.valor]
     return {
         "numero": cuenta.numero_formateado,
         "fecha": cuenta.fecha or date.today(),
@@ -337,6 +352,7 @@ def _datos_cuenta(cuenta):
         "concepto_default": anio.concepto_texto,
         "lineas": lineas,
         "ajustes": ajustes,
+        "adicionales": adicionales,
         "banco": [l for l in Parametro.get("banco_info", "").split("\n") if l.strip()],
         "emisor": _emisor_desde_parametros(),
         "obs": (cuenta.observaciones or "").strip(),
@@ -356,6 +372,7 @@ def datos_preview(a, lineas, pagador, obs=""):
         "concepto_default": a.concepto_texto,
         "lineas": lineas,
         "ajustes": [],
+        "adicionales": [],
         "banco": [l for l in Parametro.get("banco_info", "").split("\n") if l.strip()],
         "emisor": _emisor_desde_parametros(),
         "obs": obs,

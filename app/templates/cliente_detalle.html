@@ -180,7 +180,7 @@
   <div class="table-responsive">
   <table class="table table-sm table-hover mb-0">
     <thead><tr><th>Año</th><th>Cuenta</th><th>Fecha</th><th class="num">Su valor</th>
-      <th class="num">Total cuenta</th><th class="num">Ajustes</th><th class="num">Pagos</th><th class="num">Saldo cuenta</th>
+      <th class="num">Total cuenta</th><th class="num">Ajustes</th><th class="num">Adicionales</th><th class="num">Pagos</th><th class="num">Saldo cuenta</th>
       <th>Estado</th><th>Envíos</th><th>Pagos (detalle)</th></tr></thead>
     <tbody>
     {% for h in historial %}
@@ -192,6 +192,7 @@
         <td class="num">{{ (h.valor)|money }}</td>
         <td class="num">{{ (h.total)|money }}</td>
         <td class="num">{% if h.ajustes %}-{% endif %}{{ (h.ajustes|abs)|money }}</td>
+        <td class="num text-info">{% if h.adicionales %}+{% endif %}{{ (h.adicionales or 0)|money }}</td>
         <td class="num text-success">{{ (h.pagos|sum(attribute='valor') if h.pagos else 0)|money }}</td>
         <td class="num {% if h.saldo > 0 %}text-danger{% endif %}">{{ (h.saldo)|money }}</td>
         <td><span class="badge badge-estado-{{ h.estado_cuenta }}">{{ h.estado_cuenta }}</span></td>
@@ -199,7 +200,7 @@
         <td class="small">{% for p in h.pagos %}{{ (p.valor)|money }} · {{ p.forma }} · {{ p.fecha.strftime('%d/%m/%y') }}<br>{% endfor %}</td>
       </tr>
     {% else %}
-      <tr><td colspan="11" class="text-center text-muted py-4">Sin cuentas de cobro todavía.</td></tr>
+      <tr><td colspan="12" class="text-center text-muted py-4">Sin cuentas de cobro todavía.</td></tr>
     {% endfor %}
     </tbody>
   </table>

@@ -26,19 +26,25 @@
     <div class="text-muted small">PAGADO</div>
     <div class="fs-4 fw-bold text-success">{{ (pagado)|money }}</div>
     {% if emitido %}<div class="small text-muted">{{ "%.0f"|format(pagado/emitido*100) }}% del emitido</div>{% endif %}
+    {% if adicionales %}<div class="small text-muted">incluye {{ (adicionales)|money }} de adicionales (devoluciones, no ingreso)</div>{% endif %}
   </div></div>
   <div class="col-md-3"><div class="card p-3">
-    <div class="text-muted small">SALDO POR COBRAR</div>
-    <div class="fs-4 fw-bold text-danger">{{ (emitido - ajustes - pagado)|money }}</div>
-    <div class="small text-muted">ajustes/descuentos: {{ (ajustes)|money }}</div>
+    <div class="text-muted small">SALDO POR COBRAR (incluye adicionales)</div>
+    <div class="fs-4 fw-bold text-danger">{{ (emitido + adicionales - ajustes - pagado)|money }}</div>
+    <div class="small text-muted">ajustes: {{ (ajustes)|money }} &middot; adicionales: {{ (adicionales)|money }}</div>
   </div></div>
 </div>
 
 <div class="row g-3 mb-4">
   <div class="col-md-3"><div class="card p-3 border-danger">
     <div class="text-muted small">FALTA POR COBRAR (presupuestado − pagado)</div>
-    <div class="fs-4 fw-bold text-danger">{{ (presup - pagado)|money }}</div>
-    {% if ajustes %}<div class="small text-muted">− ajustes {{ (ajustes)|money }} → real {{ (presup - ajustes - pagado)|money }}</div>{% endif %}
+    <div class="fs-4 fw-bold text-danger">{{ (presup - pagado + adicionales)|money }}</div>
+    {% if ajustes %}<div class="small text-muted">− ajustes {{ (ajustes)|money }}{% if adicionales %} &middot; adicionales {{ (adicionales)|money }}{% endif %} → real {{ (presup - ajustes - pagado + adicionales)|money }}</div>{% endif %}
+  </div></div>
+  <div class="col-md-3"><div class="card p-3 border-info">
+    <div class="text-muted small">ADICIONALES EN CUENTAS (no ingreso)</div>
+    <div class="fs-6 fw-bold text-info">{{ (adicionales)|money }}</div>
+    <div class="small text-muted">cobros extra en cuentas (ej. pr&eacute;stamos que devuelven); fuera del presupuesto</div>
   </div></div>
 </div>
 

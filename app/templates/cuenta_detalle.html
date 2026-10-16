@@ -46,6 +46,9 @@
     <button class="btn btn-outline-danger btn-sm" data-accion="ajuste" data-cid="{{ cuenta.id }}"
             data-numero="{{ cuenta.numero_formateado }}">
       <i class="bi bi-arrow-down-circle"></i> Ajuste / descuento</button>
+    <button class="btn btn-outline-primary btn-sm" data-accion="adicional" data-cid="{{ cuenta.id }}"
+            data-numero="{{ cuenta.numero_formateado }}">
+      <i class="bi bi-plus-circle"></i> Cobro adicional</button>
     <button class="btn btn-outline-primary btn-sm" data-accion="outlook" data-cid="{{ cuenta.id }}"
             data-numero="{{ cuenta.numero_formateado }}" data-email="{{ pagador.email if pagador }}">
       <i class="bi bi-envelope-paper"></i> Redactar correo</button>
@@ -120,10 +123,16 @@
           <tr><td colspan="2" class="text-end text-muted">Ajustes</td>
             <td class="num text-danger">- {{ (cuenta.total_ajustes)|money }}</td><td></td></tr>
           {% endif %}
+          {% for ad in cuenta.adicionales %}{% if ad.valor %}
+          <tr><td colspan="2" class="text-end text-muted" title="Cobro adicional: no es ingreso, no afecta presupuesto">Adicional - {{ ad.descripcion or 'cobro adicional' }}</td>
+            <td class="num text-info">+ {{ (ad.valor)|money }}</td><td></td></tr>
+          {% endif %}{% endfor %}
+          <tr class="fw-bold"><td colspan="2" class="text-end">TOTAL A COBRAR</td>
+            <td class="num">{{ (cuenta.total_neto)|money }}</td><td></td></tr>
           <tr><td colspan="2" class="text-end text-muted">Pagado</td>
             <td class="num text-success">{{ (cuenta.total_pagado)|money }}</td><td></td></tr>
           <tr class="fw-bold"><td colspan="2" class="text-end">SALDO</td>
-            <td class="num {% if cuenta.saldo > 0 %}text-danger{% endif %}">{{ (cuenta.saldo)|money }}</td><td></td></tr>
+            <td class="num {% if cuenta.saldo_neto > 0 %}text-danger{% endif %}">{{ (cuenta.saldo_neto)|money }}</td><td></td></tr>
         </tfoot>
       </table>
       </div>
@@ -271,6 +280,49 @@
           <div class="col-7"><input class="form-control form-control-sm" name="motivo" placeholder="Motivo (ej: autodescuento)"></div>
           <div class="col-6"><input class="form-control form-control-sm" type="date" name="fecha"></div>
           <div class="col-6"><button class="btn btn-outline-danger btn-sm"><i class="bi bi-arrow-down-circle"></i> Registrar ajuste</button></div>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card mb-4">
+      <div class="card-header bg-white fw-semibold">Cobros adicionales <span class="text-muted fw-normal small">(no afectan presupuesto)</span></div>
+      <div class="card-body">
+        {% for a in cuenta.adicionales %}
+          <form class="row g-1 align-items-center small mb-1" method="post"
+                action="{{ url_for('main.adicional_editar', aid=a.id) }}">
+            <div class="col-auto"><i class="bi bi-plus-circle"></i></div>
+            <div class="col-4 col-md-3">
+              <input class="form-control form-control-sm text-end" name="valor" type="number"
+                     step="1000" value="{{ a.valor|int }}" required title="Valor del adicional">
+            </div>
+            <div class="col-3 col-md-2">
+              <input class="form-control form-control-sm" name="fecha" type="date"
+                     value="{{ a.fecha.isoformat() }}" title="Fecha">
+            </div>
+            <div class="col">
+              <input class="form-control form-control-sm" name="descripcion" value="{{ a.descripcion }}"
+                     placeholder="Descripción (sale en el PDF)" title="Descripción (sale en el PDF)">
+            </div>
+            <div class="col-auto">
+              <button class="btn btn-outline-success btn-sm py-0" title="Guardar cambios">
+                <i class="bi bi-check-lg"></i></button>
+            </div>
+            <div class="col-auto">
+              <button type="button" class="btn btn-outline-danger btn-sm py-0" title="Eliminar adicional"
+                onclick="if(confirm('¿Eliminar este adicional por {{ (a.valor)|money }}? El saldo y el PDF se actualizan.')){this.form.action='{{ url_for('main.adicional_eliminar', aid=a.id) }}';this.form.submit();}">
+                <i class="bi bi-x-lg"></i></button>
+            </div>
+          </form>
+        {% else %}
+          <p class="text-muted small mb-2">Sin adicionales. Úsalo para cobrar en esta misma cuenta algo aparte de la asesoría (ej: una plata prestada que te deben devolver). Suma al total y aparece en el PDF, pero NO toca el presupuesto.</p>
+        {% endfor %}
+        {% if cuenta.estado != 'ANULADA' %}
+        <form class="row g-2 mt-1" method="post" action="{{ url_for('main.cuenta_adicional', cid=cuenta.id) }}">
+          <div class="col-5"><input class="form-control form-control-sm" name="valor" type="number" step="1000" placeholder="Valor" required></div>
+          <div class="col-7"><input class="form-control form-control-sm" name="descripcion" placeholder="Descripción (ej: devolución préstamo impuesto de renta)"></div>
+          <div class="col-6"><input class="form-control form-control-sm" type="date" name="fecha"></div>
+          <div class="col-6"><button class="btn btn-outline-primary btn-sm"><i class="bi bi-plus-circle"></i> Agregar adicional</button></div>
         </form>
         {% endif %}
       </div>

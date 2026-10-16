@@ -138,9 +138,23 @@ def _render_con_pillow(cuenta, ruta_png):
         y += AL
     y += 10
 
+    for ad in d.get("adicionales", []):
+        if not ad.get("valor"):
+            continue
+        dr.text((M, y), "Adicional:", font=f_txt, fill=GRIS)
+        y += 32
+        txt_ad = (ad.get("descripcion") or "Cobro adicional") + ": $" \
+            + format(float(ad["valor"]), ",.0f").replace(",", ".")
+        fc, lin = _envuelto(txt_ad, 22)
+        for l in lin:
+            dr.text((M + 16, y), l, font=fc, fill=NEGRO)
+            y += AL
+        y += 10
+
     # ---- total destacado ----
     total = sum(float(ln.get("valor") or 0) for ln in d.get("lineas", [])) \
-        - sum(float(a.get("valor") or 0) for a in d.get("ajustes", []))
+        - sum(float(a.get("valor") or 0) for a in d.get("ajustes", [])) \
+        + sum(float(ad.get("valor") or 0) for ad in d.get("adicionales", []))
     total = f"${total:,.0f}".replace(",", ".")
     f_tot = _una(total, 26, True, W - 2 * M - 260)
     dr.rectangle([M, y, W - M, y + 64], fill=LILA)

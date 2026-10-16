@@ -318,6 +318,8 @@ class CuentaCobro(db.Model):
                             cascade="all, delete-orphan")
     ajustes = db.relationship("Ajuste", backref="cuenta", lazy="dynamic",
                               cascade="all, delete-orphan")
+    adicionales = db.relationship("Adicional", backref="cuenta", lazy="dynamic",
+                                  cascade="all, delete-orphan")
 
     seccion = db.Column(db.String(4), default="CDEC")          # sello al crear: la cuenta no migra de universo
     folio_factura = db.Column(db.String(60), default="")       # FACT: numero de la factura electronica ya expedida
@@ -353,6 +355,21 @@ class CuentaCobro(db.Model):
         return self.total - self.total_ajustes - self.total_pagado
 
     @property
+    def total_adicionales(self):
+        """Suma de cobros adicionales (no son ingreso real)."""
+        return sum(a.valor for a in self.adicionales)
+
+    @property
+    def total_neto(self):
+        """Total que se le cobra al cliente: lineas + adicionales."""
+        return self.total + self.total_adicionales
+
+    @property
+    def saldo_neto(self):
+        """Saldo incluyendo adicionales: (total + adicionales) - ajustes - pagado."""
+        return self.total_neto - self.total_ajustes - self.total_pagado
+
+    @property
     def totales_factura(self):
         """Totales para cuentas de FACTURACION: base -> IVA -> retencion -> total."""
         base = self.subtotal
@@ -384,7 +401,7 @@ class CuentaCobro(db.Model):
         """Recalcula estado automático salvo ANULADA (el número queda conservado)."""
         if self.estado == "ANULADA":
             return
-        if self.saldo <= 0 and self.total > 0:
+        if self.saldo_neto <= 0 and self.total_neto > 0:
             self.estado = "PAGADA"
         elif self.envios.count() > 0:
             self.estado = "ENVIADA"
@@ -426,6 +443,25 @@ class Ajuste(db.Model):
     fecha = db.Column(db.Date, default=date.today)
     valor = db.Column(db.Float, default=0.0)   # positivo descuenta, negativo suma
     motivo = db.Column(db.String(300), default="")
+
+
+class Adicional(db.Model):
+    """Saldo adicional a cobrar dentro de una cuenta existente (ej: plata
+    prestada al cliente que nos debe devolver). SUMA al total y al saldo de la
+    cuenta, aparece en el PDF con su descripcion, pero NO es ingreso real:
+    no toca el presupuesto ni los resumenes de ingresos de la oficina."""
+    __tablename__ = "adicionales_cuenta"
+
+    id = db.Column(db.Integer, primary_key=True)
+    cuenta_id = db.Column(db.Integer, db.ForeignKey("cuentas_cobro.id"), nullable=False)
+    fecha = db.Column(db.Date, default=date.today)
+    valor = db.Column(db.Float, default=0.0)
+    descripcion = db.Column(db.String(300), default="")   # sale en el PDF
+    creado = db.Column(db.DateTime, default=datetime.utcnow)
+
+    @property
+    def descripcion_o_defecto(self):
+        return self.descripcion or "Cobro adicional"
 
 
 class TrabajoAdicional(db.Model):

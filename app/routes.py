@@ -12,7 +12,7 @@ from flask import (Blueprint, render_template, request, redirect, url_for,
 
 from .models import (db, Parametro, AnioCobro, GrupoFamiliar, Cliente,
                      PresupuestoCliente, CuentaCobro, CuentaLinea, Envio,
-                     Ajuste, Pago, ESTADOS, TrabajoAdicional, SECCIONES, IVA_DEFAULT, RF_DEFAULT, saludo_de_cliente,
+                     Ajuste, Adicional, Pago, ESTADOS, TrabajoAdicional, SECCIONES, IVA_DEFAULT, RF_DEFAULT, saludo_de_cliente,
                      AsesoriaCatalogo, AsesoriaCliente, PresupuestoHistorial,
                      Tarea)
 from .pdf_generator import generar_pdf, ruta_pdf
@@ -180,6 +180,13 @@ def _cuerpo_correo(cuenta, pagador, extra=""):
         aviso = ("Tan pronto se efectúe el pago por favor nos notifica para asentar "
                  "la cancelación de la cuenta de cobro.")
     partes = [saludo, "", detalle]
+    ads = [a for a in cuenta.adicionales if a.valor]
+    if ads:
+        detalle_ad = ("Adicionalmente incluimos en la cuenta: "
+                      + ", ".join(a.descripcion_o_defecto + " por $ "
+                                  + format(float(a.valor), ",.0f").replace(",", ".")
+                                  for a in ads) + ".")
+        partes += [detalle_ad, ""]
     if extra:
         partes += [extra, ""]
     partes += ["Se puede consignar o Transferir en:", "", banco, "", aviso, "",
@@ -213,6 +220,9 @@ def dashboard():
     ajustes = db.session.query(db.func.coalesce(db.func.sum(Ajuste.valor), 0.0))\
         .join(CuentaCobro).filter(CuentaCobro.anio_cobro_id == a.id,
                                   CuentaCobro.estado != "ANULADA").scalar()
+    adicionales = db.session.query(db.func.coalesce(db.func.sum(Adicional.valor), 0.0))\
+        .join(CuentaCobro).filter(CuentaCobro.anio_cobro_id == a.id,
+                                  CuentaCobro.estado != "ANULADA").scalar()
 
     # clientes con presupuesto > 0 sin línea activa en ninguna cuenta
     con_cuenta = {l.cliente_id for c in a.cuentas for l in c.lineas if l.estado == "ACTIVA"}
@@ -224,7 +234,7 @@ def dashboard():
 
     cuentas = a.cuentas.order_by(CuentaCobro.numero).all()
     return render_template("dashboard.html", a=a, presup=presup, emitido=emitido,
-                           pagado=pagado, ajustes=ajustes, cuentas=cuentas,
+                           pagado=pagado, ajustes=ajustes, adicionales=adicionales, cuentas=cuentas,
                            sin_cuenta=sin_cuenta)
 
 
@@ -508,11 +518,13 @@ def morosos():
             CuentaCobro.anio_cobro_id == a.id,
             CuentaCobro.estado != "ANULADA").all():
         ls = lin_cta.get(pago.cuenta_id, [])
-        tot = sum(l.valor for l in ls)
+        tot = sum(l.valor for l in ls) + float(pago.cuenta.total_adicionales or 0)
         if tot <= 0:
             continue
         for l in ls:
-            pag_act[l.cliente_id] = pag_act.get(l.cliente_id, 0.0) + pago.valor * (l.valor / tot)
+            # tope por linea: un pago nunca "paga" de mas la parte de asesoria
+            cuota = min(pago.valor * (l.valor / tot), float(l.valor or 0))
+            pag_act[l.cliente_id] = pag_act.get(l.cliente_id, 0.0) + cuota
     # estado del año actual por cliente (peor no: el mejor estado alcanzado)
     sev = {"BORRADOR": 1, "ENVIADA": 2, "PAGADA": 3}
     ETAQ = {0: ("sin cuenta", "light text-dark"), 1: ("BORRADOR", "secondary"),
@@ -767,7 +779,7 @@ def _cobrado_pagado_anterior(a, clientes):
             if not ls:
                 continue
             tiene = True
-            tot = sum(float(l.valor or 0) for l in ls)
+            tot = sum(float(l.valor or 0) for l in ls) + float(cu.total_adicionales or 0)
             aj = float(cu.total_ajustes or 0)
             cob += max(tot - aj, 0.0)
             pag += min(float(cu.total_pagado or 0), max(tot - aj, 0.0))
@@ -1069,7 +1081,8 @@ def cliente_detalle(cid):
             "estado_linea": l.estado,
             "pagos": [{"fecha": p.fecha, "valor": p.valor, "forma": p.forma} for p in c.pagos],
             "ajustes": sum(x.valor for x in c.ajustes),
-            "total": c.total, "saldo": c.saldo,
+            "adicionales": sum(x.valor for x in c.adicionales),
+            "total": c.total_neto, "saldo": c.saldo_neto,
             "envios": [{"fecha": e.fecha, "medio": e.medio} for e in c.envios],
         })
     historial.sort(key=lambda h: (h["anio"], h["numero"]))
@@ -1588,6 +1601,8 @@ def _pagos_miembros_anio():
             continue
         pagado = float(cu.total_pagado or 0)
         ajustes = float(cu.total_ajustes or 0)
+        # los pagos de adicionales (devoluciones) no son pago de presupuesto
+        pagado = max(pagado - float(cu.total_adicionales or 0), 0.0)
         for l in lineas:
             fr = float(l.valor or 0) / tot
             parte = max(float(l.valor or 0) - ajustes * fr, 0.0)
@@ -1982,7 +1997,7 @@ def cuenta_regenerar(cid):
         msg = "Valores actualizados: " + "; ".join(cambios) + ". "
     else:
         msg = "Ningún valor cambió (las líneas ya coinciden con el presupuesto vigente). "
-    msg += f"PDF regenerado en {ruta}. Total $ {cuenta.total:,.0f}."
+    msg += f"PDF regenerado en {ruta}. Total $ {cuenta.total_neto:,.0f}."
     if sin_presup:
         msg += " Ojo, sin presupuesto vigente para: " + ", ".join(sin_presup)
     if cuenta.estado != "BORRADOR" or cuenta.envios.count() > 0:
@@ -2053,6 +2068,83 @@ def cuenta_ajuste(cid):
         db.session.commit()
         flash("Ajuste registrado", "ok")
     return redirect(url_for("main.cuenta_detalle", cid=cid))
+
+
+@bp.route("/cuentas/<int:cid>/adicional", methods=["POST"])
+def cuenta_adicional(cid):
+    """Agrega un cobro adicional a la cuenta (ej: plata prestada que el cliente
+    debe devolver). Suma al total y al saldo; NO toca presupuesto."""
+    cuenta = db.get_or_404(CuentaCobro, cid)
+    f = request.form
+    valor = float(f.get("valor") or 0)
+    if valor:
+        db.session.add(Adicional(cuenta_id=cuenta.id, valor=valor,
+                                 fecha=date.fromisoformat(f.get("fecha") or date.today().isoformat()),
+                                 descripcion=(f.get("descripcion") or "").strip()))
+        cuenta.marcar_estado()
+        db.session.commit()
+        try:
+            from .pdf_generator import generar_desde_dict, _datos_cuenta
+            carpeta = _carpeta_pdfs()
+            ruta = os.path.join(carpeta, _nombre_pdf(cuenta))
+            generar_desde_dict(_datos_cuenta(cuenta), ruta)
+        except Exception:
+            pass
+        flash("Cobro adicional agregado y PDF regenerado.", "ok")
+    return redirect(url_for("main.cuenta_detalle", cid=cid))
+
+
+@bp.route("/adicionales/<int:aid>/editar", methods=["POST"])
+def adicional_editar(aid):
+    """Edita valor/fecha/descripcion de un adicional y regenera el PDF."""
+    a = db.get_or_404(Adicional, aid)
+    cuenta = a.cuenta
+    if cuenta.estado == "ANULADA":
+        flash("La cuenta está ANULADA: no se puede editar el adicional.", "error")
+        return redirect(url_for("main.cuenta_detalle", cid=cuenta.id))
+    f = request.form
+    try:
+        a.valor = float(f.get("valor") or 0)
+    except ValueError:
+        a.valor = 0
+    try:
+        a.fecha = date.fromisoformat(f.get("fecha") or a.fecha.isoformat())
+    except ValueError:
+        pass
+    a.descripcion = (f.get("descripcion") or "").strip()
+    cuenta.marcar_estado()
+    db.session.commit()
+    try:
+        from .pdf_generator import generar_desde_dict, _datos_cuenta
+        carpeta = _carpeta_pdfs()
+        ruta = os.path.join(carpeta, _nombre_pdf(cuenta))
+        generar_desde_dict(_datos_cuenta(cuenta), ruta)
+    except Exception:
+        pass
+    flash("Adicional actualizado y PDF regenerado.", "ok")
+    return redirect(url_for("main.cuenta_detalle", cid=cuenta.id))
+
+
+@bp.route("/adicionales/<int:aid>/eliminar", methods=["POST"])
+def adicional_eliminar(aid):
+    """Elimina un adicional y regenera el PDF."""
+    a = db.get_or_404(Adicional, aid)
+    cuenta = a.cuenta
+    if cuenta.estado == "ANULADA":
+        flash("La cuenta está ANULADA: no se puede eliminar el adicional.", "error")
+        return redirect(url_for("main.cuenta_detalle", cid=cuenta.id))
+    db.session.delete(a)
+    cuenta.marcar_estado()
+    db.session.commit()
+    try:
+        from .pdf_generator import generar_desde_dict, _datos_cuenta
+        carpeta = _carpeta_pdfs()
+        ruta = os.path.join(carpeta, _nombre_pdf(cuenta))
+        generar_desde_dict(_datos_cuenta(cuenta), ruta)
+    except Exception:
+        pass
+    flash("Adicional eliminado y PDF regenerado.", "ok")
+    return redirect(url_for("main.cuenta_detalle", cid=cuenta.id))
 
 
 @bp.route("/ajustes/<int:aid>/editar", methods=["POST"])
@@ -2182,7 +2274,7 @@ def cuenta_sincronizar_grupo(cid):
     ruta = os.path.join(carpeta, _nombre_pdf(cuenta))
     generar_pdf(cuenta, ruta)
     msg = (f"Sincronizado: se agregaron {len(agregados)} miembro(s) del grupo {g.nombre}: "
-           + ", ".join(agregados) + f". Nuevo total $ {cuenta.total:,.0f}. PDF regenerado en {ruta}")
+           + ", ".join(agregados) + f". Nuevo total $ {cuenta.total_neto:,.0f}. PDF regenerado en {ruta}")
     if problemas:
         msg += ". Ojo: " + ", ".join(problemas)
     if cuenta.envios.count() > 0:
@@ -2435,10 +2527,13 @@ def exportar_excel():
         ajustes = db.session.query(db.func.coalesce(db.func.sum(Ajuste.valor), 0.0))\
             .join(CuentaCobro).filter(CuentaCobro.anio_cobro_id == a.id,
                                       CuentaCobro.estado != "ANULADA").scalar()
+        adicionales = db.session.query(db.func.coalesce(db.func.sum(Adicional.valor), 0.0))\
+            .join(CuentaCobro).filter(CuentaCobro.anio_cobro_id == a.id,
+                                      CuentaCobro.estado != "ANULADA").scalar()
         filas = [("Año de cobro", a.anio_cobro), ("Año gravable", a.anio_gravable),
                  ("Presupuestado", presup), ("Emitido en cuentas", emitido),
-                 ("Pagado", pagado), ("Ajustes/descuentos", ajustes),
-                 ("Saldo por cobrar", emitido - ajustes - pagado),
+                 ("Pagado", pagado), ("Ajustes/descuentos", ajustes), ("Adicionales (no ingreso)", adicionales),
+                 ("Saldo por cobrar", emitido + adicionales - ajustes - pagado),
                  ("Próximo número", f"{a.prefijo}-{a.numero_siguiente:03d}")]
     else:
         filas = [("Sin año activo", "")]
@@ -2455,12 +2550,13 @@ def exportar_excel():
             if l.estado != "ACTIVA":
                 continue
             filas.append((c.numero_formateado, c.fecha, c.estado, l.cliente.codigo,
-                          l.cliente.nombre, l.valor, c.total_ajustes, c.total_pagado,
-                          c.saldo, (c.pagador_principal.nombre if c.pagador_principal else ""),
+                          l.cliente.nombre, l.valor, c.total_ajustes, c.total_adicionales,
+                          c.total_pagado, c.saldo_neto,
+                          (c.pagador_principal.nombre if c.pagador_principal else ""),
                           c.motivo_anulacion or ""))
     _hoja(ws, ["Cuenta", "Fecha", "Estado", "Código", "Cliente", "Valor línea",
-               "Ajustes cuenta", "Pagado cuenta", "Saldo cuenta", "Pagador", "Motivo anulación"],
-          filas, [10, 12, 10, 8, 38, 13, 13, 13, 13, 38, 28])
+               "Ajustes cuenta", "Adicionales cuenta", "Pagado cuenta", "Saldo cuenta", "Pagador", "Motivo anulación"],
+          filas, [10, 12, 10, 8, 38, 13, 13, 13, 13, 13, 38, 28])
 
     # Hoja 3: Pagos (un registro por pago/abono)
     ws = wb.create_sheet("Pagos")
@@ -3047,6 +3143,12 @@ def _pagado_del_anio(a):
     for cid_, v in (db.session.query(Pago.cuenta_id, Pago.valor)
                     .filter(Pago.cuenta_id.in_(ids)).all()):
         pagos_cta[cid_] = pagos_cta.get(cid_, 0.0) + float(v or 0)
+    # el dinero de adicionales (devoluciones de prestamos) NO es ingreso:
+    # se descuenta del pagado prorrateable por cliente
+    adds = {}
+    for ad in Adicional.query.filter(Adicional.cuenta_id.in_(ids)).all():
+        if ad.valor:
+            adds[ad.cuenta_id] = adds.get(ad.cuenta_id, 0.0) + float(ad.valor)
     lineas_cta = {}
     for cid_, cli_, v in (db.session.query(CuentaLinea.cuenta_id, CuentaLinea.cliente_id, CuentaLinea.valor)
                           .filter(CuentaLinea.cuenta_id.in_(ids),
@@ -3054,6 +3156,7 @@ def _pagado_del_anio(a):
         lineas_cta.setdefault(cid_, []).append((cli_, float(v or 0)))
     pag = {}
     for cid_, total_c in pagos_cta.items():
+        total_c = max(total_c - adds.get(cid_, 0.0), 0.0)
         base = sum(v for _, v in lineas_cta.get(cid_, []))
         if base <= 0:
             continue

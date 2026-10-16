@@ -186,6 +186,23 @@
   </form>
 </div></div></div>
 
+<div class="modal fade" id="mAdicional" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
+  <form method="post">
+    <div class="modal-header py-2"><h5 class="modal-title"><i class="bi bi-plus-circle"></i> Cobro adicional &middot; <span class="cuenta-num"></span></h5>
+      <button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body">
+      <div class="alert alert-info py-2 small mb-2">Suma al total de la cuenta y aparece en el PDF, pero <strong>NO afecta el presupuesto</strong> (no es ingreso de asesor&iacute;a).</div>
+      <div class="mb-2"><label class="form-label small mb-1">Valor</label>
+        <input class="form-control form-control-sm text-end" name="valor" type="number" step="1000" required></div>
+      <div class="mb-2"><label class="form-label small mb-1">Descripci&oacute;n (saldr&aacute; en el PDF)</label>
+        <input class="form-control form-control-sm" name="descripcion" placeholder="Ej: Devoluci&oacute;n pr&eacute;stamo impuesto de renta"></div>
+      <div><label class="form-label small mb-1">Fecha</label>
+        <input class="form-control form-control-sm" type="date" name="fecha"></div>
+    </div>
+    <div class="modal-footer py-2"><button class="btn btn-primary btn-sm">Agregar adicional</button></div>
+  </form>
+</div></div></div>
+
 <div class="modal fade" id="mAnular" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
   <form method="post">
     <div class="modal-header py-2"><h5 class="modal-title text-danger"><i class="bi bi-x-octagon"></i> Anular cuenta · <span class="cuenta-num"></span></h5>
@@ -516,7 +533,7 @@ document.addEventListener("click", e => {
       .finally(() => b.classList.remove("disabled"));
     return;
   }
-  const modalId = { enviar: "#mEnviar", pago: "#mPago", ajuste: "#mAjuste", anular: "#mAnular", outlook: "#mOutlook" }[acc];
+  const modalId = { enviar: "#mEnviar", pago: "#mPago", ajuste: "#mAjuste", adicional: "#mAdicional", anular: "#mAnular", outlook: "#mOutlook" }[acc];
   if (!modalId) return;  const modal = document.querySelector(modalId);
   modal.querySelector("form").action = "/cuentas/" + cid + "/" + acc;
   modal.querySelector(".cuenta-num").textContent = b.dataset.numero || "";

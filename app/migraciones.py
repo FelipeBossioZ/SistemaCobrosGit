@@ -10,6 +10,17 @@ def ejecutar(db):
         if cols_pr and "valor_final" not in cols_pr:
             con.execute(text("ALTER TABLE presupuestos ADD COLUMN valor_final FLOAT"))
             con.commit()
+        # Adicionales de cuenta (saldos extra que no tocan presupuesto)
+        _tbls = {r[0] for r in con.execute(text(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='adicionales_cuenta'"))}
+        if "adicionales_cuenta" not in _tbls:
+            con.execute(text("CREATE TABLE adicionales_cuenta ("
+                             "id INTEGER PRIMARY KEY, "
+                             "cuenta_id INTEGER NOT NULL REFERENCES cuentas_cobro (id), "
+                             "fecha DATE, valor FLOAT, "
+                             "descripcion VARCHAR(300) DEFAULT '', "
+                             "creado DATETIME)"))
+            con.commit()
         # Facturacion (fase 1): seccion en grupos/clientes/cuentas + folio + pct IVA/RF
         cols_gr = {r[1] for r in con.execute(text("PRAGMA table_info(grupos_familiares)"))}
         if cols_gr and "seccion" not in cols_gr:

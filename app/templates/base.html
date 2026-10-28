@@ -153,7 +153,7 @@
       <button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
     <div class="modal-body">
       <div class="mb-2"><label class="form-label small mb-1">Valor</label>
-        <input class="form-control form-control-sm text-end" name="valor" type="number" step="1000" required id="mPagoValor"></div>
+        <input class="form-control form-control-sm text-end" name="valor" type="number" step="1" required id="mPagoValor"></div>
       <div class="mb-2"><label class="form-label small mb-1">Forma de pago</label>
         <select class="form-select form-select-sm" name="forma">
           {% for f in p('formas_pago', 'Transferencia|Consignación|Llave Bancolombia|Otro banco|Efectivo').split('|') %}<option>{{ f.strip() }}</option>{% endfor %}
@@ -175,7 +175,7 @@
       <button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
     <div class="modal-body">
       <div class="mb-2"><label class="form-label small mb-1">Valor del ajuste</label>
-        <input class="form-control form-control-sm text-end" name="valor" type="number" step="1000" required></div>
+        <input class="form-control form-control-sm text-end" name="valor" type="number" step="1" required></div>
       <div class="mb-2"><label class="form-label small mb-1">Motivo</label>
         <input class="form-control form-control-sm" name="motivo" placeholder="Ej: autodescuento, buena fe..."></div>
       <div><label class="form-label small mb-1">Fecha</label>
@@ -192,7 +192,7 @@
     <div class="modal-body">
       <div class="alert alert-info py-2 small mb-2">Suma al total de la cuenta y aparece en el PDF, pero <strong>NO afecta el presupuesto</strong> (no es ingreso de asesor&iacute;a).</div>
       <div class="mb-2"><label class="form-label small mb-1">Valor</label>
-        <input class="form-control form-control-sm text-end" name="valor" type="number" step="1000" required></div>
+        <input class="form-control form-control-sm text-end" name="valor" type="number" step="1" required></div>
       <div class="mb-2"><label class="form-label small mb-1">Descripci&oacute;n (saldr&aacute; en el PDF)</label>
         <input class="form-control form-control-sm" name="descripcion" placeholder="Ej: Devoluci&oacute;n pr&eacute;stamo impuesto de renta"></div>
       <div><label class="form-label small mb-1">Fecha</label>
@@ -563,7 +563,7 @@ document.addEventListener("click", e => {
         Escribe una base de renta para ver cuánto quedan los servicios en %.</p>
         <div class="input-group input-group-sm mb-2" style="max-width: 380px;">
           <span class="input-group-text">Base de renta</span>
-          <input type="number" id="tbase" class="form-control" min="0" step="50000" placeholder="Ej: 450000">
+          <input type="number" id="tbase" class="form-control" min="0" step="1" placeholder="Ej: 450000">
         </div>
         <div class="table-responsive">
         <table class="table table-sm table-bordered mb-3 small">

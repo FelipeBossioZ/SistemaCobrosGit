@@ -100,7 +100,7 @@
             <td>
               {% if l.estado == 'ACTIVA' %}
               <form class="d-flex gap-1" method="post" action="{{ url_for('main.linea_valor', lid=l.id) }}">
-                <input class="form-control form-control-sm text-end" name="valor" value="{{ l.valor|int }}" type="number" step="1000">
+                <input class="form-control form-control-sm text-end" name="valor" value="{{ l.valor|int }}" type="number" step="1">
                 <button class="btn btn-sm btn-outline-secondary">✓</button>
               </form>
               {% else %}<span class="num">{{ l.valor|int }}</span>{% endif %}
@@ -228,7 +228,7 @@
         {% endfor %}
         {% if cuenta.estado != 'ANULADA' %}
         <form class="row g-2 mt-1" method="post" action="{{ url_for('main.cuenta_pago', cid=cuenta.id) }}">
-          <div class="col-5"><input class="form-control form-control-sm" name="valor" type="number" step="1000" placeholder="Valor" required></div>
+          <div class="col-5"><input class="form-control form-control-sm" name="valor" type="number" step="1" placeholder="Valor" required></div>
           <div class="col-7">
             <select class="form-select form-select-sm" name="forma">
               {% for f in formas %}<option>{{ f }}</option>{% endfor %}
@@ -251,7 +251,7 @@
             <div class="col-auto"><i class="bi bi-arrow-down-circle"></i></div>
             <div class="col-4 col-md-3">
               <input class="form-control form-control-sm text-end" name="valor" type="number"
-                     step="1000" value="{{ a.valor|int }}" required title="Valor del ajuste">
+                     step="1" value="{{ a.valor|int }}" required title="Valor del ajuste">
             </div>
             <div class="col-3 col-md-2">
               <input class="form-control form-control-sm" name="fecha" type="date"
@@ -276,7 +276,7 @@
         {% endfor %}
         {% if cuenta.estado != 'ANULADA' %}
         <form class="row g-2 mt-1" method="post" action="{{ url_for('main.cuenta_ajuste', cid=cuenta.id) }}">
-          <div class="col-5"><input class="form-control form-control-sm" name="valor" type="number" step="1000" placeholder="Valor" required></div>
+          <div class="col-5"><input class="form-control form-control-sm" name="valor" type="number" step="1" placeholder="Valor" required></div>
           <div class="col-7"><input class="form-control form-control-sm" name="motivo" placeholder="Motivo (ej: autodescuento)"></div>
           <div class="col-6"><input class="form-control form-control-sm" type="date" name="fecha"></div>
           <div class="col-6"><button class="btn btn-outline-danger btn-sm"><i class="bi bi-arrow-down-circle"></i> Registrar ajuste</button></div>
@@ -294,7 +294,7 @@
             <div class="col-auto"><i class="bi bi-plus-circle"></i></div>
             <div class="col-4 col-md-3">
               <input class="form-control form-control-sm text-end" name="valor" type="number"
-                     step="1000" value="{{ a.valor|int }}" required title="Valor del adicional">
+                     step="1" value="{{ a.valor|int }}" required title="Valor del adicional">
             </div>
             <div class="col-3 col-md-2">
               <input class="form-control form-control-sm" name="fecha" type="date"
@@ -319,7 +319,7 @@
         {% endfor %}
         {% if cuenta.estado != 'ANULADA' %}
         <form class="row g-2 mt-1" method="post" action="{{ url_for('main.cuenta_adicional', cid=cuenta.id) }}">
-          <div class="col-5"><input class="form-control form-control-sm" name="valor" type="number" step="1000" placeholder="Valor" required></div>
+          <div class="col-5"><input class="form-control form-control-sm" name="valor" type="number" step="1" placeholder="Valor" required></div>
           <div class="col-7"><input class="form-control form-control-sm" name="descripcion" placeholder="Descripción (ej: devolución préstamo impuesto de renta)"></div>
           <div class="col-6"><input class="form-control form-control-sm" type="date" name="fecha"></div>
           <div class="col-6"><button class="btn btn-outline-primary btn-sm"><i class="bi bi-plus-circle"></i> Agregar adicional</button></div>

@@ -113,7 +113,7 @@
         {% else %}
         <td class="num">
           <form class="d-inline" method="post" action="{{ url_for('main.cliente_cobrado_anterior', cid=cli.id) }}">
-            <input class="form-control form-control-sm text-end cobant-input d-none" name="valor" type="number" step="1000" min="0"
+            <input class="form-control form-control-sm text-end cobant-input d-none" name="valor" type="number" step="1" min="0"
                    value="{{ '%d'|format(cli.cobrado_anterior_real) if cli.cobrado_anterior_real else '' }}" placeholder="0">
             <span class="cobant-text {{ 'text-success' if cli.cobrado_anterior_real else 'text-muted' }}" role="button"
                   title="Clic para editar: lo realmente pagado {{ (a.anio_cobro|int - 1) if a }}">{{ cli.cobrado_anterior_real|money if cli.cobrado_anterior_real else '·' }}</span>

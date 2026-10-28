@@ -43,7 +43,7 @@ Los valores de "Efect. pagado" se editan con un clic (para corregir el históric
         <td class="num">{{ pa|money }}</td>
         <td class="num">
           <form class="d-inline" method="post" action="{{ url_for('main.cliente_cobrado_anterior', cid=c.id) }}">
-            <input class="form-control form-control-sm text-end cobant-input d-none" name="valor" type="number" step="1000" min="0" value="{{ '%d'|format(ef) }}">
+            <input class="form-control form-control-sm text-end cobant-input d-none" name="valor" type="number" step="1" min="0" value="{{ '%d'|format(ef) }}">
             <span class="cobant-text text-danger" role="button" title="Clic para editar">{{ ef|money }}</span>
           </form>
         </td>
@@ -85,7 +85,7 @@ Los valores de "Efect. pagado" se editan con un clic (para corregir el históric
         <td class="num">{{ pa|money }}</td>
         <td class="num">
           <form class="d-inline" method="post" action="{{ url_for('main.cliente_cobrado_anterior', cid=c.id) }}">
-            <input class="form-control form-control-sm text-end cobant-input d-none" name="valor" type="number" step="1000" min="0" value="{{ '%d'|format(ef) }}">
+            <input class="form-control form-control-sm text-end cobant-input d-none" name="valor" type="number" step="1" min="0" value="{{ '%d'|format(ef) }}">
             <span class="cobant-text text-success" role="button" title="Clic para editar">{{ ef|money }}</span>
           </form>
         </td>
@@ -124,7 +124,7 @@ Los valores de "Efect. pagado" se editan con un clic (para corregir el históric
         <td class="num">{% if presup.get(c.id) %}{{ presup.get(c.id)|money }}{% endif %}</td>
         <td class="num">
           <form class="d-inline" method="post" action="{{ url_for('main.cliente_cobrado_anterior', cid=c.id) }}">
-            <input class="form-control form-control-sm text-end cobant-input d-none" name="valor" type="number" step="1000" min="0"
+            <input class="form-control form-control-sm text-end cobant-input d-none" name="valor" type="number" step="1" min="0"
                    value="{{ '%d'|format(c.cobrado_anterior_real) if c.cobrado_anterior_real else '' }}" placeholder="0">
             <span class="cobant-text {{ 'text-success' if c.cobrado_anterior_real else 'text-muted' }}" role="button"
                   title="Clic para editar">{{ c.cobrado_anterior_real|money if c.cobrado_anterior_real else '·' }}</span>

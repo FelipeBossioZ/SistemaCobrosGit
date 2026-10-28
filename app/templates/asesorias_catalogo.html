@@ -22,7 +22,7 @@
           </select>
         </td>
         <td><input class="form-control form-control-sm text-end cat-pct" type="number" step="5" min="0" max="200" value="{{ '%g'|format(it.defecto_pct) }}"></td>
-        <td><input class="form-control form-control-sm text-end cat-valor" type="number" step="1000" min="0" value="{{ '%d'|format(it.defecto_valor|int) }}"></td>
+        <td><input class="form-control form-control-sm text-end cat-valor" type="number" step="1" min="0" value="{{ '%d'|format(it.defecto_valor|int) }}"></td>
         <td><input class="form-control form-control-sm cat-base" value="{{ it.base_min }}" placeholder="ej: base $150.000, 1 SMLV/mes..."></td>
       </tr>
     {% endfor %}

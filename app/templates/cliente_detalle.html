@@ -97,7 +97,7 @@
         </td>
         <td class="num" style="max-width: 150px;">
           {% if f.fija %}
-            <input class="form-control form-control-sm text-end ac-val" type="number" step="1000" min="0" disabled
+            <input class="form-control form-control-sm text-end ac-val" type="number" step="1" min="0" disabled
                    value="{{ '%d'|format(f.valor|round|int) if f.valor is not none else '' }}" placeholder="{{ '%d'|format(f.it.defecto_valor|int) }}">
           {% else %}
             <input class="form-control form-control-sm text-end ac-pct" type="number" step="5" min="0" max="200" disabled
@@ -171,7 +171,7 @@
   <div class="card-body border-top">
     <form class="row g-2" method="post" action="{{ url_for('main.cliente_trabajo_nuevo', cid=cli.id) }}">
       <div class="col-md-6"><input class="form-control form-control-sm" name="descripcion" required placeholder="Descripción (ej: requerimiento DIAN, consulta tributaria...)"></div>
-      <div class="col-md-2"><input class="form-control form-control-sm" name="valor" type="number" step="1000" placeholder="Valor"></div>
+      <div class="col-md-2"><input class="form-control form-control-sm" name="valor" type="number" step="1" placeholder="Valor"></div>
       <div class="col-md-auto"><button class="btn btn-sm btn-outline-primary"><i class="bi bi-plus-lg"></i> Registrar</button></div>
     </form>
   </div>
@@ -251,7 +251,7 @@
         <div class="row g-2 align-items-end mb-2">
           <div class="col-auto">
             <label class="form-label mb-0 small fw-semibold">Base de renta</label>
-            <input class="form-control" type="number" step="10000" min="0" id="paq-base" style="width: 180px;">
+            <input class="form-control" type="number" step="1" min="0" id="paq-base" style="width: 180px;">
           </div>
           <div class="col">
             <div class="small text-muted">Digita solo la <b>base</b>: el total lo calcula el sistema
@@ -522,7 +522,7 @@
   function renderPaq() {
     paqBody.innerHTML = datos.filas.map(f => {
       const inp = f.fija
-        ? '<input class="form-control form-control-sm text-end paq-in" id="paq-in-' + f.id + '" type="number" step="1000" min="0" value="' + (f.valor != null ? Math.round(f.valor) : (f.std_val || 0)) + '">'
+        ? '<input class="form-control form-control-sm text-end paq-in" id="paq-in-' + f.id + '" type="number" step="1" min="0" value="' + (f.valor != null ? Math.round(f.valor) : (f.std_val || 0)) + '">'
         : '<input class="form-control form-control-sm text-end paq-in" id="paq-in-' + f.id + '" type="number" step="5" min="0" max="200" value="' + (f.pct != null ? f.pct : f.std_pct) + '">';
       const cant = f.fija
         ? '<input class="form-control form-control-sm text-end" id="paq-cant-' + f.id + '" type="number" step="1" min="1" style="max-width:84px;" value="' + (f.cantidad || 1) + '">'

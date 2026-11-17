@@ -80,6 +80,7 @@
         <li class="nav-item"><a class="nav-link" href="{{ url_for('main.dashboard') }}">Resumen</a></li>
         <li class="nav-item"><a class="nav-link" href="{{ url_for('main.cuentas') }}">Cuentas de Cobro</a></li>
         <li class="nav-item"><a class="nav-link" href="{{ url_for('main.cuentas', seccion='FACT') }}">Facturación</a></li>
+        <li class="nav-item"><a class="nav-link" href="{{ url_for('main.facturacion_importar') }}" title="Importar universo FACT desde el Excel"><i class="bi bi-download"></i></a></li>
         <li class="nav-item"><a class="nav-link" href="{{ url_for('main.clientes') }}">Clientes</a></li>
         <li class="nav-item"><a class="nav-link" href="{{ url_for('main.morosos') }}">Morosos</a></li>
     <li class="nav-item"><a class="nav-link" href="{{ url_for('main.tareas') }}">Tareas{% if tareas_pend_count %} <span class="badge rounded-pill text-bg-warning">{{ tareas_pend_count }}</span>{% endif %}</a></li>

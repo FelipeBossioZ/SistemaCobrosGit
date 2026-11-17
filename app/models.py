@@ -116,6 +116,7 @@ class Cliente(db.Model):
     moroso_nota = db.Column(db.String(300), default="")             # nota del módulo de morosos
     moroso_cerrado = db.Column(db.Boolean, default=False)           # True = pagó de menos por acuerdo interno (no es moroso)
     decl_renta = db.Column(db.String(12), default="")            # ""=sin dato, NO_OBLIGADO, PRESENTADA
+    rf_activa = db.Column(db.Boolean, default=True)              # FACT: este cliente practica retencion en la fuente (11% salvo RST / PN no comerciante)
     renta_base = db.Column(db.Float)                             # base confirmada del paquete (None = derivar del presupuesto)
 
     seccion = db.Column(db.String(4), default="CDEC")            # CDEC | FACT (universo del cliente)
@@ -547,3 +548,11 @@ def rf_default_pct():
         return float(Parametro.get("fact_rf_default", str(RF_DEFAULT)))
     except (TypeError, ValueError):
         return RF_DEFAULT
+
+
+def rf_cliente_pct(cliente):
+    """None = la cuenta resuelve su % (cliente practica RF); 0.0 = no practica
+    (RST o PN no comerciante, rf_activa=False)."""
+    if cliente is not None and getattr(cliente, "rf_activa", True) is False:
+        return 0.0
+    return None

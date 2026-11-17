@@ -43,6 +43,9 @@ def ejecutar(db):
         if cols and "seccion" not in cols:
             con.execute(text("ALTER TABLE clientes ADD COLUMN seccion VARCHAR(4) DEFAULT 'CDEC'"))
             con.commit()
+        if cols and "rf_activa" not in cols:
+            con.execute(text("ALTER TABLE clientes ADD COLUMN rf_activa BOOLEAN DEFAULT 1"))
+            con.commit()
         if "cobrado_anterior_real" not in cols:
             con.execute(text("ALTER TABLE clientes ADD COLUMN cobrado_anterior_real NUMERIC DEFAULT 0"))
             con.commit()

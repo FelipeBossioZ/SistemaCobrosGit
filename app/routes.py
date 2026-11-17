@@ -17,6 +17,7 @@ from .models import (db, Parametro, AnioCobro, GrupoFamiliar, Cliente,
                      Tarea)
 from .pdf_generator import generar_pdf, ruta_pdf
 from . import rutas_comunes
+from .fact_import import previsualizar as fact_previsualizar, aplicar as fact_aplicar
 
 bp = Blueprint("main", __name__)
 
@@ -3435,6 +3436,12 @@ def cliente_seccion(cid):
     cli = db.get_or_404(Cliente, cid)
     if request.method == "POST":
         acc = request.form.get("accion", "")
+        if acc == "rf":
+            cli.rf_activa = bool(request.form.get("rf_activa") == "1")
+            db.session.commit()
+            flash(("Retencion activada para " if cli.rf_activa else "Retencion desactivada para ")
+                  + cli.nombre, "ok")
+            return redirect(url_for("main.cliente_seccion", cid=cli.id))
         if acc == "datos_cuenta":
             try:
                 cta = db.session.get(CuentaCobro, int(request.form.get("cuenta_id") or 0))
@@ -3613,6 +3620,61 @@ def anio_activar(aid):
         a.activo = True
     db.session.commit()
     return redirect(url_for("main.anios"))
+
+
+# ---------------- Facturacion: importacion del universo FACT (FASE 2A) ----------------
+EXCEL_FACT_DEFECTO = ("C:/OneDriveOficina/OneDrive/OFICINA/FELIPE/Oficina Felipe"
+                      "/6-Presupuestos/0-Presupuesto de cobros AG 2025 -Facturación.xlsx")
+
+
+@bp.route("/facturacion/importar", methods=["GET", "POST"])
+def facturacion_importar():
+    """Importa clientes + grupos de factura + presupuestos IPC desde el Excel
+    del universo FACT (idempotente: lo que ya existe solo se actualiza)."""
+    a = anio_actual()
+    ruta = EXCEL_FACT_DEFECTO
+    if request.method == "POST":
+        f = request.files.get("archivo")
+        ruta_in = None
+        if f and f.filename:
+            os.makedirs(current_app.instance_path, exist_ok=True)
+            ruta_in = os.path.join(current_app.instance_path, "import_fact.xlsx")
+            f.save(ruta_in)
+        elif request.form.get("usar_defecto") == "1":
+            ruta_in = ruta
+        if not ruta_in:
+            flash("Selecciona el archivo o marca usar el Excel por defecto", "error")
+            return redirect(url_for("main.facturacion_importar"))
+        accion = request.form.get("accion", "previsualizar")
+        try:
+            if accion == "aplicar":
+                stats = fact_aplicar(ruta_in)
+                flash("Importacion aplicada: %d clientes nuevos, %d actualizados, "
+                      "%d grupos de factura, %d presupuestos creados." % (
+                          stats["clientes_nuevos"], stats["clientes_actualizados"],
+                          stats["grupos"], stats["presupuestos"]), "ok")
+                return redirect(url_for("main.clientes", seccion="FACT"))
+            plan = fact_previsualizar(ruta_in)
+            return render_template("facturacion_importar.html", plan=plan,
+                                   ruta=ruta_in, a=a)
+        except Exception as e:
+            db.session.rollback()
+            current_app.logger.exception(e)
+            flash("Error leyendo/importando: %s" % e, "error")
+            return redirect(url_for("main.facturacion_importar"))
+    return render_template("facturacion_importar.html", plan=None, ruta=ruta, a=a)
+
+
+@bp.route("/clientes/<int:cid>/rf", methods=["POST"])
+def cliente_rf(cid):
+    """Marca/desmarca la retencion en la fuente de un cliente FACT
+    (RF la practica el comprador al 11%; sin RF: RST o PN no comerciante)."""
+    cli = db.get_or_404(Cliente, cid)
+    cli.rf_activa = bool(request.form.get("rf_activa") == "1")
+    db.session.commit()
+    flash(("Retencion activada para " if cli.rf_activa else "Retencion desactivada para ")
+          + cli.nombre + " (las cuentas nuevas lo aplican; el % de la cuenta siempre puede sobreescribirse)", "ok")
+    return redirect(request.referrer or url_for("main.cliente_detalle", cid=cli.id))
 
 
 # ---------------- Importación ----------------

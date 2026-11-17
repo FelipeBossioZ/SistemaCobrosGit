@@ -46,6 +46,27 @@
 </div>
 
 <div class="card mb-4">
+  <div class="card-header bg-white fw-semibold">Retenci&oacute;n en la fuente (FACT)</div>
+  <div class="card-body">
+    <p class="small text-muted mb-2">La RF la practica siempre el comprador sobre el 11%. Un cliente NO la practica si est&aacute; en el r&eacute;gimen simple de tributaci&oacute;n (RST) o es persona natural no obligada (no comerciante con contabilidad). Esta marca la usan las cuentas nuevas; el % de cada cuenta siempre puede sobreescribirse a mano.</p>
+    {% if (cli.seccion or 'CDEC') == 'FACT' %}
+    <form method="post" class="d-flex gap-2 align-items-center">
+      <input type="hidden" name="accion" value="rf">
+      {% if cli.rf_activa is none or cli.rf_activa %}
+      <span class="badge bg-warning text-dark">RF activa (11%)</span>
+      <button class="btn btn-outline-secondary btn-sm" name="rf_activa" value="0">Desactivar retenci&oacute;n</button>
+      {% else %}
+      <span class="badge bg-secondary">Sin retenci&oacute;n (RST / PN no comerciante)</span>
+      <button class="btn btn-outline-warning btn-sm text-dark" name="rf_activa" value="1">Activar retenci&oacute;n (11%)</button>
+      {% endif %}
+    </form>
+    {% else %}
+    <span class="small text-muted">Este cliente est&aacute; en CDEC: no aplica retenci&oacute;n de facturaci&oacute;n.</span>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card mb-4">
   <div class="card-header bg-white fw-semibold">Cuentas donde {{ cli.nombre }} es el pagador</div>
   <div class="table-responsive">
   <table class="table table-sm mb-0 align-middle">

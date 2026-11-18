@@ -159,7 +159,8 @@ def _dibujar(c, d):
     # ---------- 1. Encabezado morado ----------
     hb = 56
     caja(c, izq, y - hb, der, y, fill=MORADO)
-    tc(c, cx, y - 24, "CUENTA DE COBRO Nº " + d["numero"], 15, bold=True, color=BLANCO)
+    _titulo_doc = "SOPORTE PARA FACTURA ELECTRÓNICA Nº " if d.get("es_fact") else "CUENTA DE COBRO Nº "
+    tc(c, cx, y - 24, _titulo_doc + d["numero"], 13.5 if d.get("es_fact") else 15, bold=True, color=BLANCO)
     tc(c, cx, y - 43, f"Medellín, {f.day} de {MESES[f.month - 1]} de {f.year}", 9.5, color=BLANCO)
     y -= hb + 16
 
@@ -202,9 +203,11 @@ def _dibujar(c, d):
     n_rows = sum(rh2 if l in hay_conceptos else rh for l in lineas)
     mostrar_ajustes = bool(ajustes)
     mostrar_adicionales = bool(adicionales)
+    tf = d.get("totales_fact") if d.get("es_fact") else None
     th = hh + n_rows \
         + (rh * (1 + len(ajustes)) if mostrar_ajustes else 0) \
-        + (rh * len(adicionales) if mostrar_adicionales else 0) + rh
+        + (rh * len(adicionales) if mostrar_adicionales else 0) \
+        + (rh * 2 if tf else 0) + rh
 
     caja(c, izq, y - th, der, y)
     caja(c, izq, y - hh, der, y, fill=MORADO_OSC)
@@ -239,20 +242,36 @@ def _dibujar(c, d):
     for ad in adicionales:
         caja(c, izq, ry - rh, der, ry)
         c.line(x_div, ry - rh, x_div, ry)
-        t(c, izq + 10, ry - 16, recortar(c, "ADICIONAL - " + ad["descripcion"], "Helvetica", 9, x_div - izq - 20), 9)
-        tr(c, x_div + (der - x_div) / 2, ry - 16, "+" + fmt(abs(ad["valor"])), 9.5)
+        t(c, izq + 10, ry - 16, recortar(c, "" + ad["descripcion"], "Helvetica", 9, x_div - izq - 20), 9)
+        tr(c, x_div + (der - x_div) / 2, ry - 16, "" + fmt(abs(ad["valor"])), 9.5)
         ry -= rh
     total = (sum(l["valor"] for l in lineas)
              - (sum(a["valor"] for a in ajustes) if mostrar_ajustes else 0)
              + (sum(ad["valor"] for ad in adicionales) if mostrar_adicionales else 0))
-    caja(c, izq, ry - rh, der, ry, fill=GRIS_CLARO)
-    c.line(x_div, ry - rh, x_div, ry)
-    t(c, izq + 10, ry - 16.5, "TOTAL A PAGAR", 10, bold=True)
-    tr(c, x_div + (der - x_div) / 2, ry - 16.5, fmt(total), 10.5, bold=True)
+    if tf:
+        caja(c, izq, ry - rh, der, ry)
+        c.line(x_div, ry - rh, x_div, ry)
+        t(c, izq + 10, ry - 16, "IVA %s%%" % tf["iva_pct"], 9.5)
+        tr(c, x_div + (der - x_div) / 2, ry - 16, "+" + fmt(tf["iva"]), 9.5)
+        ry -= rh
+        caja(c, izq, ry - rh, der, ry)
+        c.line(x_div, ry - rh, x_div, ry)
+        t(c, izq + 10, ry - 16, "RETENCIÓN EN LA FUENTE %s%%" % tf["rf_pct"], 9.5)
+        tr(c, x_div + (der - x_div) / 2, ry - 16, "-" + fmt(tf["rf"]), 9.5)
+        ry -= rh
+        caja(c, izq, ry - rh, der, ry, fill=GRIS_CLARO)
+        c.line(x_div, ry - rh, x_div, ry)
+        t(c, izq + 10, ry - 16.5, "NETO A PAGAR", 10, bold=True)
+        tr(c, x_div + (der - x_div) / 2, ry - 16.5, fmt(tf["total"]), 10.5, bold=True)
+    else:
+        caja(c, izq, ry - rh, der, ry, fill=GRIS_CLARO)
+        c.line(x_div, ry - rh, x_div, ry)
+        t(c, izq + 10, ry - 16.5, "TOTAL A PAGAR", 10, bold=True)
+        tr(c, x_div + (der - x_div) / 2, ry - 16.5, fmt(total), 10.5, bold=True)
     y -= th + 12
 
     # ---------- 6. SON (valor en letras) ----------
-    son_txt = numero_a_letras(total) + " PESOS M/CTE."
+    son_txt = numero_a_letras(tf["total"] if tf else total) + " PESOS M/CTE."
     son_lines = wrap(c, son_txt, "Helvetica", 9.5, der - izq - 62)
     sb = 13 * len(son_lines) + 14
     caja(c, izq, y - sb, der, y)
@@ -310,7 +329,10 @@ def _dibujar(c, d):
     tc(c, (W / 2 + 40 + der - 20) / 2, fy - 12, "Aceptada:", 9, bold=True)
     tc(c, (W / 2 + 40 + der - 20) / 2, fy - 25, "C.C. o NIT N°: ____________________", 8.5, color=GRIS_TXT)
 
-    tc(c, cx, 28, "NOTA: Este documento NO es factura de venta.", 7.5, color=GRIS_TXT)
+    if not d.get("es_fact"):
+        tc(c, cx, 28, "NOTA: Este documento NO es factura de venta.", 7.5, color=GRIS_TXT)
+    else:
+        tc(c, cx, 28, "Documento soporte de la factura electrónica indicada (expedida por el emisor).", 7.5, color=GRIS_TXT)
     tc(c, cx, 18, "Por favor enviar comprobante de pago para asentar la cancelación de la cuenta de cobro.", 7.5, color=GRIS_TXT)
 
 
@@ -340,9 +362,13 @@ def _datos_cuenta(cuenta):
                for a in cuenta.ajustes if a.valor]
     adicionales = [{"descripcion": ad.descripcion or "Cobro adicional", "valor": float(ad.valor or 0)}
                    for ad in cuenta.adicionales if ad.valor]
+    _es_fact = (cuenta.seccion or "CDEC") == "FACT"
+    _tf = cuenta.totales_factura if _es_fact else None
     return {
         "numero": cuenta.numero_formateado,
         "fecha": cuenta.fecha or date.today(),
+        "es_fact": _es_fact,
+        "totales_fact": _tf,
         "pagador_nombre": pagador.nombre if pagador else "",
         "pagador_saludo": saludo_de_cliente(pagador),
         "pagador_nit": pagador.nit_formateado if pagador else "",
@@ -363,6 +389,8 @@ def datos_preview(a, lineas, pagador, obs=""):
     return {
         "numero": f"{a.prefijo}-{a.numero_siguiente:03d}",
         "fecha": date.today(),
+        "es_fact": False,
+        "totales_fact": None,
         "pagador_nombre": pagador.nombre if pagador else "",
         "pagador_saludo": saludo_de_cliente(pagador),
         "pagador_nit": pagador.nit_formateado if pagador else "",

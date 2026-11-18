@@ -16,6 +16,7 @@ from .models import (db, Parametro, AnioCobro, GrupoFamiliar, Cliente,
                      AsesoriaCatalogo, AsesoriaCliente, PresupuestoHistorial,
                      Tarea)
 from .pdf_generator import generar_pdf, ruta_pdf
+from .models import iva_default_pct, rf_default_pct
 from . import rutas_comunes
 from .fact_import import previsualizar as fact_previsualizar, aplicar as fact_aplicar
 
@@ -208,35 +209,41 @@ def dashboard():
     a = anio_actual()
     if not a:
         return render_template("sin_anio.html")
+    seccion = request.args.get("seccion") if request.args.get("seccion") in SECCIONES else "CDEC"
+    filtro_cta = (CuentaCobro.seccion == "FACT") if seccion == "FACT" else (CuentaCobro.seccion != "FACT")
+    ids_sec = [c.id for c in Cliente.query.filter_by(activo=True).all()
+               if (c.seccion or "CDEC") == seccion]
     presup = db.session.query(db.func.coalesce(
         db.func.sum(db.func.coalesce(PresupuestoCliente.valor_final, PresupuestoCliente.valor)), 0.0))\
-        .filter_by(anio_cobro=a.anio_cobro).scalar()
+        .filter_by(anio_cobro=a.anio_cobro).filter(PresupuestoCliente.cliente_id.in_(ids_sec)).scalar()
     emitido = db.session.query(db.func.coalesce(db.func.sum(CuentaLinea.valor), 0.0))\
         .join(CuentaCobro).filter(CuentaCobro.anio_cobro_id == a.id,
                                   CuentaLinea.estado == "ACTIVA",
-                                  CuentaCobro.estado != "ANULADA").scalar()
+                                  CuentaCobro.estado != "ANULADA", filtro_cta).scalar()
     pagado = db.session.query(db.func.coalesce(db.func.sum(Pago.valor), 0.0))\
         .join(CuentaCobro).filter(CuentaCobro.anio_cobro_id == a.id,
-                                  CuentaCobro.estado != "ANULADA").scalar()
+                                  CuentaCobro.estado != "ANULADA", filtro_cta).scalar()
     ajustes = db.session.query(db.func.coalesce(db.func.sum(Ajuste.valor), 0.0))\
         .join(CuentaCobro).filter(CuentaCobro.anio_cobro_id == a.id,
-                                  CuentaCobro.estado != "ANULADA").scalar()
+                                  CuentaCobro.estado != "ANULADA", filtro_cta).scalar()
     adicionales = db.session.query(db.func.coalesce(db.func.sum(Adicional.valor), 0.0))\
         .join(CuentaCobro).filter(CuentaCobro.anio_cobro_id == a.id,
-                                  CuentaCobro.estado != "ANULADA").scalar()
+                                  CuentaCobro.estado != "ANULADA", filtro_cta).scalar()
 
     # clientes con presupuesto > 0 sin línea activa en ninguna cuenta
     con_cuenta = {l.cliente_id for c in a.cuentas for l in c.lineas if l.estado == "ACTIVA"}
     sin_cuenta = []
     for p in PresupuestoCliente.query.filter_by(anio_cobro=a.anio_cobro).all():
-        if p.cliente.activo and p.vigente > 0 and p.cliente.id not in con_cuenta:
+        if p.cliente.activo and p.vigente > 0 and (p.cliente.seccion or "CDEC") == seccion \
+                and p.cliente.id not in con_cuenta:
             sin_cuenta.append(p.cliente)
     sin_cuenta.sort(key=lambda c: c.nombre)
 
-    cuentas = a.cuentas.order_by(CuentaCobro.numero).all()
+    cuentas = [c for c in a.cuentas.order_by(CuentaCobro.numero).all()
+               if (c.seccion or "CDEC") == seccion]
     return render_template("dashboard.html", a=a, presup=presup, emitido=emitido,
                            pagado=pagado, ajustes=ajustes, adicionales=adicionales, cuentas=cuentas,
-                           sin_cuenta=sin_cuenta)
+                           sin_cuenta=sin_cuenta, seccion=seccion)
 
 
 # ---------------- Clientes ----------------
@@ -249,9 +256,8 @@ def clientes():
     else:
         query = query.filter_by(activo=True)
     lista = query.order_by(Cliente.nombre).all()
-    seccion_filtro = request.args.get("seccion", "")
-    if seccion_filtro in SECCIONES:
-        lista = [c for c in lista if (c.seccion or "CDEC") == seccion_filtro]
+    seccion_filtro = request.args.get("seccion") if request.args.get("seccion") in SECCIONES else "CDEC"
+    lista = [c for c in lista if (c.seccion or "CDEC") == seccion_filtro]
     if ver == "cobrables":
         lista = [c for c in lista if c.puede_cobrarse]
     # numero de orden en la vista (1..N) para la columna #: solo cuenta clientes visibles.
@@ -547,7 +553,10 @@ def morosos():
     deuda_tot = 0.0
     descuento_tot = 0.0
     pag_ant_tot = 0.0
+    seccion = request.args.get("seccion") if request.args.get("seccion") in SECCIONES else "CDEC"
     for c in Cliente.query.filter_by(activo=True).order_by(Cliente.nombre).all():
+        if (c.seccion or "CDEC") != seccion:
+            continue
         pa = float(c.cobrado_anterior or 0)        # lo que se le cobró el año pasado
         ef = float(c.cobrado_anterior_real or 0)   # lo que realmente pagó el año pasado
         pag_ant_tot += ef
@@ -566,7 +575,7 @@ def morosos():
     return render_template("morosos.html", a=a, deudores=deudores, acuerdos=acuerdos,
                            sin_cobro=sin_cobro, deuda_tot=deuda_tot,
                            descuento_tot=descuento_tot, pag_ant_tot=pag_ant_tot,
-                           n_sin=len(sin_cobro), presup=presup)
+                           n_sin=len(sin_cobro), presup=presup, seccion=seccion)
 
 
 @bp.route("/clientes/<int:cid>/correo")
@@ -1635,18 +1644,18 @@ def grupos():
             estado_grupos[g.id] = "ok"
         elif any(e == "abono" for e in ests):
             estado_grupos[g.id] = "parcial"
-    _sec = request.args.get("seccion")
-    _gs = GrupoFamiliar.query.order_by(GrupoFamiliar.nombre).all()
-    if _sec in SECCIONES:
-        _gs = [g for g in _gs if g.seccion_real == _sec]
+    _sec = request.args.get("seccion") if request.args.get("seccion") in SECCIONES else "CDEC"
+    _gs = [g for g in GrupoFamiliar.query.order_by(GrupoFamiliar.nombre).all()
+           if g.seccion_real == _sec]
     _sin = [c for c in Cliente.query.filter_by(grupo_id=None, activo=True)
             .order_by(Cliente.nombre).all()
-            if not _sec or (c.seccion or "CDEC") == _sec]
+            if (c.seccion or "CDEC") == _sec]
     return render_template("grupos.html",
                            pagos_map=pagos,
                            estado_grupos=estado_grupos,
                            grupos=_gs,
-                           clientes_sin_grupo=_sin)
+                           clientes_sin_grupo=_sin,
+                           seccion=_sec)
 
 
 @bp.route("/grupos/nuevo", methods=["POST"])
@@ -1809,17 +1818,24 @@ def cuenta_nueva():
         if pagador_id and any(l.cliente_id == pagador_id for l in cuenta.lineas):
             cuenta.pagador_cliente_id = pagador_id
         cuenta.observaciones = (f.get("observaciones", "") or "").strip()
+        if seccion == "FACT":
+            if cuenta.pct_iva is None:
+                cuenta.pct_iva = iva_default_pct()
+            if cuenta.pct_rf is None:
+                cuenta.pct_rf = rf_default_pct()
         a.numero_siguiente = cuenta.numero + 1
         db.session.commit()
         flash(f"Cuenta {cuenta.numero_formateado} creada en borrador", "ok")
         return redirect(url_for("main.cuenta_detalle", cid=cuenta.id))
-    # GET: selector con presupuestos y grupos
+    # GET: selector con presupuestos y grupos (solo la seccion pedida; CDEC por defecto)
+    seccion = request.args.get("seccion") if request.args.get("seccion") in SECCIONES else "CDEC"
     pares = []
     for p in PresupuestoCliente.query.filter_by(anio_cobro=a.anio_cobro).all():
-        if p.cliente.activo:
+        if p.cliente.activo and (p.cliente.seccion or "CDEC") == seccion:
             pares.append({"cliente": p.cliente, "valor": p.vigente})
     pares.sort(key=lambda x: x["cliente"].nombre)
-    grupos = GrupoFamiliar.query.order_by(GrupoFamiliar.nombre).all()
+    grupos = [g for g in GrupoFamiliar.query.order_by(GrupoFamiliar.nombre).all()
+              if g.seccion_real == seccion]
     pagadores = [p["cliente"] for p in pares]
     ya_en = {}
     for l in (CuentaLinea.query.join(CuentaCobro)
@@ -1828,7 +1844,8 @@ def cuenta_nueva():
                       CuentaCobro.estado != "ANULADA").all()):
         ya_en[l.cliente_id] = l.cuenta.numero_formateado
     return render_template("cuenta_nueva.html", a=a, pares=pares, grupos=grupos,
-                           pagadores=pagadores, ya_en=ya_en)
+                           pagadores=pagadores, ya_en=ya_en, seccion=seccion,
+                           iva_def=iva_default_pct(), rf_def=rf_default_pct())
 
 
 @bp.route("/cuentas/<int:cid>")
@@ -2550,14 +2567,14 @@ def exportar_excel():
         for l in c.lineas:
             if l.estado != "ACTIVA":
                 continue
-            filas.append((c.numero_formateado, c.fecha, c.estado, l.cliente.codigo,
-                          l.cliente.nombre, l.valor, c.total_ajustes, c.total_adicionales,
-                          c.total_pagado, c.saldo_neto,
+            filas.append((c.numero_formateado, c.fecha, c.estado, (c.seccion or "CDEC"),
+                          l.cliente.codigo, l.cliente.nombre, l.valor, c.total_ajustes,
+                          c.total_adicionales, c.total_pagado, c.saldo_neto,
                           (c.pagador_principal.nombre if c.pagador_principal else ""),
                           c.motivo_anulacion or ""))
-    _hoja(ws, ["Cuenta", "Fecha", "Estado", "Código", "Cliente", "Valor línea",
+    _hoja(ws, ["Cuenta", "Fecha", "Estado", "Sección", "Código", "Cliente", "Valor línea",
                "Ajustes cuenta", "Adicionales cuenta", "Pagado cuenta", "Saldo cuenta", "Pagador", "Motivo anulación"],
-          filas, [10, 12, 10, 8, 38, 13, 13, 13, 13, 13, 38, 28])
+          filas, [10, 12, 10, 8, 8, 38, 13, 13, 13, 13, 13, 38, 28])
 
     # Hoja 3: Pagos (un registro por pago/abono)
     ws = wb.create_sheet("Pagos")
@@ -2581,13 +2598,13 @@ def exportar_excel():
             presup[p.cliente_id] = p
     for cli in Cliente.query.order_by(Cliente.nombre):
         p = presup.get(cli.id)
-        filas.append((cli.codigo, cli.nombre, cli.tipo, cli.nit, cli.dv, cli.ciudad,
-                      cli.telefonos or "", cli.email or "",
+        filas.append((cli.codigo, cli.nombre, cli.tipo, (cli.seccion or "CDEC"), cli.nit, cli.dv,
+                      cli.ciudad, cli.telefonos or "", cli.email or "",
                       cli.grupo.nombre if cli.grupo else "", "Sí" if cli.es_pagador else "",
                       p.vigente if p else 0, "Sí" if cli.activo else "No", cli.nota or ""))
-    _hoja(ws, ["Código", "Nombre", "Tipo", "CC/NIT", "DV", "Ciudad", "Teléfonos",
+    _hoja(ws, ["Código", "Nombre", "Tipo", "Sección", "CC/NIT", "DV", "Ciudad", "Teléfonos",
                "Email", "Grupo", "Pagador", "Presupuesto", "Activo", "Nota"],
-          filas, [8, 38, 6, 14, 5, 12, 14, 28, 22, 9, 13, 8, 30])
+          filas, [8, 38, 6, 8, 14, 5, 12, 14, 28, 22, 9, 13, 8, 30])
 
     # Hoja 5: Maestro (espejo del Excel clásico: TODOS los clientes activos con su
     # presupuesto del año, y el estado de cobro se va llenando a medida que hay cuentas)
@@ -3166,7 +3183,7 @@ def _pagado_del_anio(a):
     return pag
 
 
-def _filas_auditoria(a):
+def _filas_auditoria(a, seccion="CDEC"):
     """Filas de auditoria del anio: debio (paquete del motor) vs comprometido
     (cuentas ENVIADA/PAGADA) + pagado real (pagos registrados).
     SIN_EMITIR = paquete definido pero sin cuenta emitida todavia (no es error,
@@ -3182,6 +3199,8 @@ def _filas_auditoria(a):
     for cid in set(cobrado) | set(activos):
         cli = activos.get(cid)
         if cli is None:
+            continue
+        if (cli.seccion or "CDEC") != seccion:
             continue
         f_cli, _b = _asesorias_filas(cli, a,
                                      maestro_previo=m_all.get((cli.nit or "").strip(), {}))
@@ -3215,7 +3234,8 @@ def auditoria():
     if not a:
         flash("Activa un año de cobro primero.", "error")
         return redirect(url_for("main.dashboard"))
-    filas = _filas_auditoria(a)
+    seccion = request.args.get("seccion") if request.args.get("seccion") in SECCIONES else "CDEC"
+    filas = _filas_auditoria(a, seccion)
     comparables = [f for f in filas if f["estado"] != "SIN_EMITIR"]
     total_debio = round(sum(f["debio"] for f in comparables), 2)
     total_cob = round(sum(f["cobrado"] for f in comparables), 2)
@@ -3224,7 +3244,7 @@ def auditoria():
     return render_template("auditoria.html", a=a, filas=comparables,
                            sin_emitir=sin_emitir,
                            total_debio=total_debio, total_cobrado=total_cob,
-                           total_pagado=total_pag)
+                           total_pagado=total_pag, seccion=seccion)
 
 
 @bp.route("/auditoria.xlsx", methods=["GET"])
@@ -3237,7 +3257,8 @@ def auditoria_xlsx():
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill
     from openpyxl.utils import get_column_letter
-    filas = _filas_auditoria(a)
+    seccion = request.args.get("seccion") if request.args.get("seccion") in SECCIONES else "CDEC"
+    filas = _filas_auditoria(a, seccion)
     wb = Workbook()
     h1 = Font(bold=True, color="FFFFFFFF")
     fill = PatternFill("solid", fgColor="FF6D28D9")

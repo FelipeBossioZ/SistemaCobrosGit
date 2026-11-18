@@ -1,7 +1,13 @@
 {% extends "base.html" %}
 {% block title %}Morosos{% endblock %}
 {% block content %}
-<h3 class="mb-1">Morosos y pendientes</h3>
+<h3 class="mb-1 d-flex justify-content-between align-items-center flex-wrap gap-2">
+  Morosos y pendientes
+  <span class="btn-group btn-group-sm">
+    <a class="btn {{ 'btn-dark' if seccion != 'FACT' else 'btn-outline-secondary' }}" href="{{ url_for('main.morosos', seccion='CDEC') }}">Cuentas de cobro</a>
+    <a class="btn {{ 'btn-success' if seccion == 'FACT' else 'btn-outline-secondary' }}" href="{{ url_for('main.morosos', seccion='FACT') }}">Facturaci&oacute;n</a>
+  </span>
+</h3>
 <p class="text-muted small">Revisión de {{ (a.anio_cobro|int - 1) if a }}: quién pagó menos de lo cobrado y a quién nunca se le registró pago.
 Los valores de "Efect. pagado" se editan con un clic (para corregir el histórico). La nota se guarda sola. El botón <span class="badge bg-success">✓ pagó todo</span> marca al cliente como pagado completo de una vez; los casos especiales, con el lápiz: edita el valor real y deja la nota. El botón <span class="badge bg-secondary">no es moroso</span> cierra al que pagó de menos por un acuerdo: pide nota OBLIGATORIA (ej: "acuerdo interno, se descontó $20.000") y lo pasa a "Acuerdos internos", que sale igual en el Excel descargable.</p>
 

@@ -13,7 +13,8 @@
 </style>
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h3 class="mb-0">Clientes
-              <a class="btn btn-sm {{ 'btn-dark' if seccion != 'FACT' else 'btn-outline-secondary' }} ms-2" href="{{ url_for('main.clientes', ver=ver, seccion='CDEC') }}">Ver solo Cuentas de cobro</a>
+              <a class="btn btn-sm {{ 'btn-dark' if not seccion else 'btn-outline-secondary' }} ms-2" href="{{ url_for('main.clientes', ver=ver) }}">Todos</a>
+              <a class="btn btn-sm {{ 'btn-dark' if seccion != 'FACT' else 'btn-outline-secondary' }}" href="{{ url_for('main.clientes', ver=ver, seccion='CDEC') }}">Ver solo Cuentas de cobro</a>
               <a class="btn btn-sm {{ 'btn-success' if seccion == 'FACT' else 'btn-outline-secondary' }}" href="{{ url_for('main.clientes', ver=ver, seccion='FACT') }}">Ver solo Facturación</a>
             </h3>
   <div class="d-flex gap-2">

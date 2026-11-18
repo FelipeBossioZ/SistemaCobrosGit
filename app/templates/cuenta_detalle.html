@@ -129,6 +129,15 @@
           {% endif %}{% endfor %}
           <tr class="fw-bold"><td colspan="2" class="text-end">TOTAL A COBRAR</td>
             <td class="num">{{ (cuenta.total_neto)|money }}</td><td></td></tr>
+          {% if (cuenta.seccion or 'CDEC') == 'FACT' and cuenta.pct_iva is not none %}
+          {% set tfact = cuenta.totales_factura %}
+          <tr><td colspan="2" class="text-end text-muted">IVA {{ tfact.iva_pct }}%</td>
+            <td class="num">+ {{ (tfact.iva)|money }}</td><td></td></tr>
+          <tr><td colspan="2" class="text-end text-muted">Retenci&oacute;n en la fuente {{ tfact.rf_pct }}%</td>
+            <td class="num text-danger">- {{ (tfact.rf)|money }}</td><td></td></tr>
+          <tr class="fw-bold"><td colspan="2" class="text-end">NETO A PAGAR (con IVA y retenci&oacute;n)</td>
+            <td class="num">{{ (tfact.total)|money }}</td><td></td></tr>
+          {% endif %}
           <tr><td colspan="2" class="text-end text-muted">Pagado</td>
             <td class="num text-success">{{ (cuenta.total_pagado)|money }}</td><td></td></tr>
           <tr class="fw-bold"><td colspan="2" class="text-end">SALDO</td>

@@ -1,7 +1,13 @@
 {% extends "base.html" %}
 {% block title %}Grupos familiares{% endblock %}
 {% block content %}
-<h3 class="mb-3">Grupos familiares</h3>
+<h3 class="mb-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
+  {% if seccion == 'FACT' %}Grupos de facturaci&oacute;n{% else %}Grupos familiares{% endif %}
+  <span class="btn-group btn-group-sm">
+    <a class="btn {{ 'btn-dark' if seccion != 'FACT' else 'btn-outline-secondary' }}" href="{{ url_for('main.grupos', seccion='CDEC') }}">Cuentas de cobro</a>
+    <a class="btn {{ 'btn-success' if seccion == 'FACT' else 'btn-outline-secondary' }}" href="{{ url_for('main.grupos', seccion='FACT') }}">Facturaci&oacute;n</a>
+  </span>
+</h3>
 <p class="text-muted small">Los miembros del grupo comparten cuenta de cobro. Marca con
 <span class="badge bg-info text-dark">pagador</span> a nombre de quién se emite. Dentro de un grupo
 puedes tener subgrupos: simplemente crea otro grupo con los miembros que quieras.</p>
@@ -24,8 +30,8 @@ puedes tener subgrupos: simplemente crea otro grupo con los miembros que quieras
     <form class="row g-2 mb-3" method="post" action="{{ url_for('main.grupo_nuevo') }}">
       <div class="col-auto">
         <select class="form-select" name="seccion" title="Un grupo completo es de una sola sección">
-          <option value="CDEC">Cuentas de cobro</option>
-          <option value="FACT">Facturaci&oacute;n</option>
+          <option value="CDEC" {{ 'selected' if seccion != 'FACT' }}>Cuentas de cobro</option>
+          <option value="FACT" {{ 'selected' if seccion == 'FACT' }}>Facturaci&oacute;n</option>
         </select>
       </div>
       <div class="col"><input class="form-control" name="nombre" placeholder="Nombre del grupo (ej: G26 o FAMILIA RESTREPO POSADA)" required></div>

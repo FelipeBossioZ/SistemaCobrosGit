@@ -151,14 +151,20 @@ def _render_con_pillow(cuenta, ruta_png):
             y += AL
         y += 10
 
-    # ---- total destacado ----
-    total = sum(float(ln.get("valor") or 0) for ln in d.get("lineas", [])) \
-        - sum(float(a.get("valor") or 0) for a in d.get("ajustes", [])) \
-        + sum(float(ad.get("valor") or 0) for ad in d.get("adicionales", []))
+    # ---- total destacado (FACT: neto con IVA y retencion) ----
+    tf = d.get("totales_fact") if d.get("es_fact") else None
+    if tf:
+        total = float(tf["total"])
+        etiqueta_total = "NETO A PAGAR:"
+    else:
+        total = sum(float(ln.get("valor") or 0) for ln in d.get("lineas", [])) \
+            - sum(float(a.get("valor") or 0) for a in d.get("ajustes", [])) \
+            + sum(float(ad.get("valor") or 0) for ad in d.get("adicionales", []))
+        etiqueta_total = "TOTAL A PAGAR:"
     total = f"${total:,.0f}".replace(",", ".")
     f_tot = _una(total, 26, True, W - 2 * M - 260)
     dr.rectangle([M, y, W - M, y + 64], fill=LILA)
-    dr.text((M + 16, y + 16), "TOTAL A PAGAR:", font=f_h2, fill=MORADO)
+    dr.text((M + 16, y + 16), etiqueta_total, font=f_h2, fill=MORADO)
     w_tot = _tmp.textlength(total, font=f_tot)
     dr.text((W - M - 16 - w_tot, y + 16), total, font=f_tot, fill=MORADO)
     y += 92

@@ -1747,12 +1747,14 @@ def cuentas():
     if not a:
         return redirect(url_for("main.dashboard"))
     estado = request.args.get("estado", "")
-    seccion = request.args.get("seccion", "")
+    seccion = request.args.get("seccion") if request.args.get("seccion") in SECCIONES else "CDEC"
     query = a.cuentas
     if estado:
         query = query.filter_by(estado=estado)
-    if seccion in SECCIONES:
-        query = query.filter_by(seccion=seccion)
+    if seccion == "FACT":
+        query = query.filter_by(seccion="FACT")
+    else:
+        query = query.filter(CuentaCobro.seccion != "FACT")
     return render_template("cuentas.html", a=a,
                            cuentas=query.order_by(CuentaCobro.numero).all(),
                            estado=estado, estados=ESTADOS, seccion=seccion)
@@ -1846,6 +1848,23 @@ def cuenta_nueva():
     return render_template("cuenta_nueva.html", a=a, pares=pares, grupos=grupos,
                            pagadores=pagadores, ya_en=ya_en, seccion=seccion,
                            iva_def=iva_default_pct(), rf_def=rf_default_pct())
+
+
+@bp.route("/cuentas/<int:cid>/folio", methods=["POST"])
+def cuenta_folio(cid):
+    """FACT: guarda el numero de la factura electronica (y % IVA/RF si se cambian)."""
+    cuenta = db.get_or_404(CuentaCobro, cid)
+    cuenta.folio_factura = (request.form.get("folio") or "").strip()
+    for campo, attr in (("iva", "pct_iva"), ("rf", "pct_rf")):
+        v = request.form.get(campo)
+        if v not in (None, ""):
+            try:
+                setattr(cuenta, attr, float(v))
+            except (TypeError, ValueError):
+                pass
+    db.session.commit()
+    flash("Folio de factura guardado para " + cuenta.numero_formateado, "ok")
+    return redirect(request.referrer or url_for("main.cuentas", seccion="FACT"))
 
 
 @bp.route("/cuentas/<int:cid>")

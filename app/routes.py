@@ -1027,6 +1027,149 @@ def grupo_cuenta_expresa(gid):
     return redirect(destino)
 
 
+# ---------------- Facturacion: previsualizador de factura por grupo (FASE 2D) ----------------
+@bp.route("/grupos/<int:gid>/factura", methods=["GET"])
+def grupo_factura(gid):
+    """Vista de como quedara la factura del grupo: una fila por miembro con el
+    valor editable (presupuesto vigente como punto de partida), desglose
+    Base -> IVA -> Retencion -> NETO recalculado en vivo. No crea nada."""
+    a = anio_actual()
+    g = db.get_or_404(GrupoFamiliar, gid)
+    if g.seccion_real != "FACT":
+        flash("Este grupo es de Cuentas de cobro: usa el flujo normal de cuentas.", "error")
+        return redirect(url_for("main.grupos", seccion="CDEC"))
+    miembros = [m for m in g.miembros if m.activo]
+    filas = []
+    for m in miembros:
+        p = PresupuestoCliente.query.filter_by(cliente_id=m.id, anio_cobro=a.anio_cobro).first() if a else None
+        presup = float(p.vigente) if p else 0.0
+        filas.append({"cli": m, "presup": presup, "valor": presup})
+    cuenta = None
+    if a:
+        cuenta = (CuentaLinea.query.join(CuentaCobro)
+                  .filter(CuentaLinea.cliente_id.in_([m.id for m in miembros]),
+                          CuentaCobro.anio_cobro_id == a.id,
+                          CuentaCobro.estado != "ANULADA",
+                          CuentaCobro.seccion == "FACT").first())
+        cuenta = cuenta.cuenta if cuenta else None
+    return render_template("grupo_factura.html", g=g, filas=filas, a=a,
+                           cuenta=cuenta,
+                           iva_def=iva_default_pct(), rf_def=rf_default_pct())
+
+
+@bp.route("/grupos/<int:gid>/factura/guardar", methods=["POST"])
+def grupo_factura_guardar(gid):
+    """Guarda la factura del grupo con los valores ajustados: crea la cuenta
+    FACT del grupo (BORRADOR, pagador = pagador del grupo) o actualiza las
+    lineas de la existente. Los presupuestos NO se tocan (solo referencia).
+    Por fetch responde JSON con el resumen."""
+    a = anio_actual()
+    g = db.get_or_404(GrupoFamiliar, gid)
+    destino = url_for("main.grupos", seccion="FACT")
+
+    def _res(msg, tipo="ok", extra=None):
+        if request.accept_mimetypes.best == "application/json":
+            d = {"ok": tipo == "ok", ("mensaje" if tipo == "ok" else "error"): msg}
+            if extra:
+                d.update(extra)
+            return jsonify(d)
+        flash(msg, tipo)
+        return redirect(destino)
+
+    if not a:
+        return _res("No hay año activo", "error")
+    if g.seccion_real != "FACT":
+        return _res("Este grupo es de Cuentas de cobro", "error")
+    miembros = {m.id: m for m in g.miembros if m.activo}
+    if not miembros:
+        return _res("El grupo no tiene miembros activos", "error")
+    pagador = g.pagador or list(miembros.values())[0]
+
+    # valores del formulario: valor_<cliente_id>
+    lineas_nuevas = []
+    total = 0.0
+    for k, v in request.form.items():
+        if not k.startswith("valor_"):
+            continue
+        try:
+            cid = int(k[6:])
+        except ValueError:
+            continue
+        cli = miembros.get(cid)
+        if cli is None:
+            continue
+        try:
+            val = float(v or 0)
+        except (TypeError, ValueError):
+            val = 0.0
+        lineas_nuevas.append((cli, val))
+        total += val
+    if not lineas_nuevas:
+        return _res("No hay valores para guardar", "error")
+
+    # cuenta existente del grupo este año (FACT) o crearla
+    cuenta = (CuentaLinea.query.join(CuentaCobro)
+              .filter(CuentaLinea.cliente_id.in_(list(miembros.keys())),
+                      CuentaCobro.anio_cobro_id == a.id,
+                      CuentaCobro.estado != "ANULADA",
+                      CuentaCobro.seccion == "FACT").first())
+    cuenta = cuenta.cuenta if cuenta else None
+    cambios = []
+    if cuenta is None:
+        cuenta = CuentaCobro(anio_cobro_id=a.id, numero=_numero_libre(a),
+                             fecha=date.today(), estado="BORRADOR", seccion="FACT")
+        cuenta.pagador_cliente_id = pagador.id
+        if cuenta.pct_iva is None:
+            cuenta.pct_iva = iva_default_pct()
+        if cuenta.pct_rf is None:
+            cuenta.pct_rf = rf_default_pct()
+        cuenta.observaciones = (request.form.get("observaciones", "") or "").strip()
+        db.session.add(cuenta)
+        db.session.flush()
+        for cli, val in lineas_nuevas:
+            if val > 0.5:   # sin valor no mete linea (sin filas $0 en el PDF)
+                db.session.add(CuentaLinea(cuenta=cuenta, cliente_id=cli.id, valor=val))
+        a.numero_siguiente = cuenta.numero + 1
+        accion = "creada"
+    else:
+        if cuenta.estado == "ANULADA":
+            return _res("La cuenta %s esta ANULADA: no se puede editar." % cuenta.numero_formateado, "error")
+        cuenta.pagador_cliente_id = pagador.id
+        cuenta.observaciones = (request.form.get("observaciones", "") or "").strip()
+        actuales = {l.cliente_id: l for l in cuenta.lineas}
+        vistos = set()
+        for cli, val in lineas_nuevas:
+            vistos.add(cli.id)
+            lin = actuales.get(cli.id)
+            if lin is None:
+                db.session.add(CuentaLinea(cuenta=cuenta, cliente_id=cli.id, valor=val))
+                cambios.append("%s +$%s" % (cli.nombre, f"{val:,.0f}"))
+            elif abs(float(lin.valor or 0) - val) > 0.5:
+                cambios.append("%s $%s -> $%s" % (cli.nombre, f"{float(lin.valor or 0):,.0f}", f"{val:,.0f}"))
+                lin.valor = val
+        for l in list(cuenta.lineas):
+            if l.cliente_id not in vistos and l.estado == "ACTIVA":
+                cambios.append("%s fuera (anulada su linea)" % l.cliente.nombre)
+                l.estado = "ANULADA"
+        accion = "actualizada"
+    db.session.flush()
+    cuenta.marcar_estado()
+    db.session.commit()
+    # PDF regenerado (regla oficina) en la carpeta de PDFs
+    carpeta = _carpeta_pdfs()
+    ruta = os.path.join(carpeta, _nombre_pdf(cuenta))
+    try:
+        generar_pdf(cuenta, ruta)
+    except Exception:
+        ruta = ""
+    extra = {"numero": cuenta.numero_formateado, "neto": cuenta.totales_factura["total"]}
+    msg = "Factura %s %s. Neto a pagar $ %s. Presupuestos intactos (solo referencia)." % (
+        cuenta.numero_formateado, accion, f"{cuenta.totales_factura['total']:,.0f}")
+    if cambios:
+        msg += " Cambios: " + "; ".join(cambios[:6]) + ("..." if len(cambios) > 6 else "")
+    return _res(msg, "ok", extra)
+
+
 @bp.route("/clientes/nuevo", methods=["GET", "POST"])
 def cliente_nuevo():
     a = anio_actual()

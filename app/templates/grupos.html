@@ -65,12 +65,18 @@ puedes tener subgrupos: simplemente crea otro grupo con los miembros que quieras
               title="Miembros con cuenta este año: {{ ns.con_cuenta }} · pagaron: {{ ns.pagaron }}">pagaron {{ ns.pagaron }}/{{ ns.con_cuenta }}</span>{% endif %}
         </strong>
         <div class="d-flex gap-2 align-items-center">
+          {% if g.seccion_real == 'FACT' %}
+          <a class="btn btn-sm btn-success" href="{{ url_for('main.grupo_factura', gid=g.id) }}"
+             title="Ver como quedaria la factura del grupo y ajustar valores"><i class="bi bi-file-earmark-text"></i> Ver factura</a>
+          {% endif %}
           {% if g.pagador %}
           <form method="post" action="{{ url_for('main.grupo_cuenta_expresa', gid=g.id) }}"
                 onsubmit="return confirm('Expreso completo del grupo {{ g.nombre }}: crea la cuenta (a nombre de {{ g.pagador.nombre }}), genera el PDF y deja el borrador de Outlook (.eml) listo. ¿Seguir?');">
+            {% if g.seccion_real != 'FACT' %}
             <button class="btn btn-sm btn-outline-primary" title="Expreso completo: crea con lo presupuestado de los miembros activos, PDF y borrador de Outlook"><i class="bi bi-lightning-charge"></i> cuenta del grupo</button>
+            {% endif %}
           </form>
-          {% else %}<span class="small text-warning" title="Marca un pagador para poder crear la cuenta del grupo">sin pagador</span>{% endif %}
+          {% elif g.seccion_real != 'FACT' %}<span class="small text-warning" title="Marca un pagador para poder crear la cuenta del grupo">sin pagador</span>{% endif %}
           <form method="post" action="{{ url_for('main.grupo_eliminar', gid=g.id) }}"
                 onsubmit="return confirm('¿Eliminar el grupo? Los clientes quedan sin grupo.');">
             <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>

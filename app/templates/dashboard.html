@@ -1,9 +1,17 @@
 {% extends "base.html" %}
 {% block title %}Resumen · Sistema de Cobros{% endblock %}
 {% block content %}
-<h3 class="mb-3 d-flex justify-content-between align-items-center">Resumen {{ a.anio_cobro }}
-  <a class="btn btn-outline-primary btn-sm" href="{{ url_for('main.exportar_excel') }}">
-    <i class="bi bi-file-earmark-excel"></i> Exportar Excel</a></h3>
+<h3 class="mb-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
+  {% if seccion == 'FACT' %}Facturaci&oacute;n {{ a.anio_cobro }}{% else %}Resumen {{ a.anio_cobro }}{% endif %}
+  <span class="d-flex gap-2 align-items-center">
+    <span class="btn-group btn-group-sm">
+      <a class="btn {{ 'btn-dark' if seccion != 'FACT' else 'btn-outline-secondary' }}" href="{{ url_for('main.dashboard', seccion='CDEC') }}">Cuentas de cobro</a>
+      <a class="btn {{ 'btn-success' if seccion == 'FACT' else 'btn-outline-secondary' }}" href="{{ url_for('main.dashboard', seccion='FACT') }}">Facturaci&oacute;n</a>
+    </span>
+    <a class="btn btn-outline-primary btn-sm" href="{{ url_for('main.exportar_excel') }}">
+      <i class="bi bi-file-earmark-excel"></i> Exportar Excel</a>
+  </span>
+</h3>
 
 <div class="row g-2 mb-3">
   <div class="col-md-5 col-lg-4">
@@ -53,7 +61,7 @@
     <div class="card">
       <div class="card-header bg-white fw-semibold d-flex justify-content-between align-items-center gap-2 flex-wrap">
         <div class="d-flex align-items-center gap-2 flex-wrap">
-          <span>Cuentas de cobro {{ a.prefijo }}-xxx</span>
+          <span>{% if seccion == 'FACT' %}Facturas{% else %}Cuentas de cobro{% endif %} {{ a.prefijo }}-xxx</span>
           <div class="btn-group btn-group-sm flex-wrap" role="group" aria-label="Filtrar cuentas por estado" id="filtroEstado">
             <button type="button" class="btn btn-outline-secondary active" data-estado="" data-base="Todo">Todo</button>
             <button type="button" class="btn btn-outline-secondary" data-estado="BORRADOR" data-base="Borrador">Borrador</button>
@@ -107,7 +115,7 @@
 
   <div class="col-lg-4">
     <div class="card">
-      <div class="card-header bg-white fw-semibold">Clientes sin cuenta de cobro ({{ sin_cuenta|length }})</div>
+      <div class="card-header bg-white fw-semibold">{% if seccion == 'FACT' %}Clientes de facturaci&oacute;n sin factura{% else %}Clientes sin cuenta de cobro{% endif %} ({{ sin_cuenta|length }})</div>
       <div class="card-body p-0" style="max-height: 480px; overflow-y:auto;">
         <table class="table table-sm mb-0" id="tablaSinCuenta">
           <tbody>

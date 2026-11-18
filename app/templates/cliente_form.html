@@ -29,6 +29,19 @@
         <option value="SRA" {{ 'selected' if cli and cli.trato == 'SRA' }}>Señora</option>
       </select>
     </div>
+    <div class="col-md-3">
+      <label class="form-label">Secci&oacute;n</label>
+      <select class="form-select" name="seccion">
+        <option value="CDEC" {{ 'selected' if cli is none or (cli.seccion or 'CDEC') == 'CDEC' }}>Cuenta de cobro</option>
+        <option value="FACT" {{ 'selected' if cli and (cli.seccion or 'CDEC') == 'FACT' }}>Facturaci&oacute;n</option>
+      </select>
+      {% if cli and (cli.seccion or 'CDEC') == 'CDEC' %}
+      <div class="form-check small mt-1">
+        <input class="form-check-input" type="checkbox" name="mover_borradores" value="1" id="mb-sec">
+        <label class="form-check-label" for="mb-sec" title="Si cambia de sección, mueve también sus cuentas en BORRADOR">mover borradores</label>
+      </div>
+      {% endif %}
+    </div>
     <div class="col-md-6">
       <label class="form-label">C.C. / NIT</label>
       <input class="form-control" name="nit" value="{{ cli.nit if cli else '' }}">
@@ -93,4 +106,21 @@
     <a class="btn btn-outline-secondary" href="{{ url_for('main.clientes') }}">Cancelar</a>
   </div>
 </form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener("DOMContentLoaded", function(){
+  var sel = document.querySelector("select[name=seccion]");
+  if (!sel) return;
+  sel.dataset.orig = sel.value;
+  sel.addEventListener("change", function(){
+    if (this.value === this.dataset.orig) return;
+    var txt = this.value === "FACT"
+      ? "\u00bfPasar este cliente a FACTURACI\u00d3N? Las cuentas nuevas de \u00e9l llevar\u00e1n IVA y retenci\u00f3n, y aparecer\u00e1 en el listado de Facturaci\u00f3n."
+      : "\u00bfPasar este cliente a CUENTA DE COBRO? Dejar\u00e1 de facturar con IVA/retenci\u00f3n.";
+    if (!confirm(txt)) this.value = this.dataset.orig;
+  });
+});
+</script>
 {% endblock %}

@@ -8,8 +8,18 @@
 </style>
 {% endblock %}
 {% block content %}
-<h3 class="mb-1">Nueva cuenta de cobro</h3>
+<h3 class="mb-1 d-flex justify-content-between align-items-center flex-wrap gap-2">
+  {% if seccion == 'FACT' %}Nueva factura (FACT){% else %}Nueva cuenta de cobro{% endif %}
+  <span class="btn-group btn-group-sm">
+    <a class="btn {{ 'btn-dark' if seccion != 'FACT' else 'btn-outline-secondary' }}" href="{{ url_for('main.cuenta_nueva', seccion='CDEC') }}">Universo Cuentas de cobro</a>
+    <a class="btn {{ 'btn-success' if seccion == 'FACT' else 'btn-outline-secondary' }}" href="{{ url_for('main.cuenta_nueva', seccion='FACT') }}">Universo Facturaci&oacute;n</a>
+  </span>
+</h3>
 <p class="text-muted small">Se creará como <strong>{{ a.prefijo }}-{{ "%03d"|format(a.numero_siguiente) }}</strong> en BORRADOR. Marca los clientes (o un grupo completo), ajusta valores y conceptos si hace falta, escoge el pagador y confirma.</p>
+
+{% if seccion == 'FACT' %}
+<p class="text-muted small">Esta factura pertenece al universo FACTURACI&Oacute;N: solo ver&aacute;s clientes y grupos FACT. IVA {{ iva_def }}% y retenci&oacute;n {{ rf_def }}% seg&uacute;n el cliente (editable por cuenta despu&eacute;s).</p>
+{% endif %}
 
 <form method="post" id="formNueva">
   <div class="card mb-3 p-3">
@@ -37,12 +47,13 @@
             <tbody>
             {% for p in pares %}
               <tr class="picker-row" data-cid="{{ p.cliente.id }}" data-nombre="{{ p.cliente.nombre|lower }}"
-                  data-grupo="{{ p.cliente.grupo_id or '' }}">
+                  data-grupo="{{ p.cliente.grupo_id or '' }}" data-seccion="{{ p.cliente.seccion or 'CDEC' }}">
                 <td style="width: 30px;"><input class="form-check-input chk" type="checkbox" name="clientes"
                       value="{{ p.cliente.id }}" id="c{{ p.cliente.id }}"></td>
                 <td><label for="c{{ p.cliente.id }}">{{ p.cliente.nombre }}</label>
                   {% if p.cliente.id in ya_en %}<span class="badge bg-danger" title="Ya tiene cuenta este año: el sistema no dejará duplicarla">ya en {{ ya_en[p.cliente.id] }}</span>{% endif %}
-                  {% if p.cliente.es_pagador %}<span class="badge bg-info text-dark">pagador</span>{% endif %}</td>
+                  {% if p.cliente.es_pagador %}<span class="badge bg-info text-dark">pagador</span>{% endif %}
+                  {% if (p.cliente.seccion or 'CDEC') == 'FACT' %}<span class="badge bg-success">FACT</span>{% endif %}</td>
                 <td class="small text-muted">{{ p.cliente.grupo.nombre if p.cliente.grupo }}</td>
                 <td class="num">{{ (p.valor)|money }}</td>
               </tr>
@@ -163,9 +174,6 @@ document.querySelectorAll(".btn-grupo").forEach(b => {
   };
 });
 
-document.getElementById("formNueva").addEventListener("submit", () => {
-  // quitar del DOM los inputs de concepto de filas no seleccionadas (no aplica: se crean con la fila)
-});
 recalc();
 </script>
 {% endblock %}

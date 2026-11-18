@@ -9,7 +9,11 @@
       Pagado = pagos reales registrados en esas cuentas. Una cuenta ENVIADA está comprometida aunque aún no paguen.</div>
   </div>
   <div>
-    <a class="btn btn-outline-success" href="{{ url_for('main.auditoria_xlsx') }}"><i class="bi bi-file-earmark-excel"></i> Descargar Excel</a>
+    <span class="btn-group btn-group-sm me-2">
+      <a class="btn {{ 'btn-dark' if seccion != 'FACT' else 'btn-outline-secondary' }}" href="{{ url_for('main.auditoria', seccion='CDEC') }}">Cuentas de cobro</a>
+      <a class="btn {{ 'btn-success' if seccion == 'FACT' else 'btn-outline-secondary' }}" href="{{ url_for('main.auditoria', seccion='FACT') }}">Facturaci&oacute;n</a>
+    </span>
+    <a class="btn btn-outline-success" href="{{ url_for('main.auditoria_xlsx', seccion=seccion) }}"><i class="bi bi-file-earmark-excel"></i> Descargar Excel</a>
     <a class="btn btn-outline-secondary" href="{{ url_for('main.clientes') }}">Volver</a>
   </div>
 </div>

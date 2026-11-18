@@ -4,7 +4,8 @@
 <div class="d-flex justify-content-between align-items-start mb-3">
   <div>
     <h3 class="mb-1">{{ cli.nombre }} <span class="badge bg-secondary">cód. {{ cli.codigo }}</span>
-      {% if not cli.activo %}<span class="badge bg-dark">inactivo</span>{% endif %}</h3>
+      {% if not cli.activo %}<span class="badge bg-dark">inactivo</span>{% endif %}
+      {% if (cli.seccion or 'CDEC') == 'FACT' %}<span class="badge bg-success" title="Sección facturación">FACT</span>{% else %}<span class="badge bg-dark" title="Sección cuentas de cobro">CDEC</span>{% endif %}</h3>
     <div class="text-muted small">
       {{ cli.tipo }} · C.C./NIT {{ cli.nit }}{% if cli.dv %}-{{ cli.dv }}{% endif %} · {{ cli.ciudad }}
       {% if cli.grupo %} · Grupo: <a href="{{ url_for('main.grupos') }}">{{ cli.grupo.nombre }}</a>
@@ -27,6 +28,7 @@
       <i class="bi bi-file-earmark-pdf"></i> Previsualizar PDF</button>
     <a class="btn btn-outline-secondary" href="{{ url_for('main.cliente_photo_card', cid=cli.id) }}" target="_blank"><i class="bi bi-printer"></i> Photo card</a>
     <a class="btn btn-outline-primary" href="{{ url_for('main.cliente_editar', cid=cli.id) }}"><i class="bi bi-pencil"></i> Editar</a>
+    <a class="btn btn-outline-info" href="{{ url_for('main.cliente_seccion', cid=cli.id) }}" title="Sección CDEC/Facturación, folio de factura, IVA y retención"><i class="bi bi-diagram-2"></i> Sección / Facturación</a>
     <a class="btn btn-outline-secondary" href="{{ url_for('main.clientes') }}">Volver</a>
   </div>
 </div>

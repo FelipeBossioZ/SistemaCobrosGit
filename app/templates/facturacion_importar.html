@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}Importar facturaci&oacute;n (FASE 2A){% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div>
+    <h3 class="mb-1">Importar universo FACTURACI&Oacute;N <span class="badge bg-success">FACT</span></h3>
+    <div class="text-muted small">Lee el Excel <em>0-Presupuesto de cobros AG 2025 -Facturaci&oacute;n.xlsx</em>: clientes (hoja Facturas), grupos de factura (hoja Grupos Facturaci&oacute;n) y presupuestos iniciales = efectivamente cobrado AG-2024 &times; IPC 5,10%.</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('main.clientes', seccion='FACT') }}">Listado Facturaci&oacute;n</a>
+</div>
+
+{% if plan is none %}
+<div class="card mb-4">
+  <div class="card-header bg-white fw-semibold">Paso 1 &mdash; Previsualizar</div>
+  <div class="card-body">
+    <form method="post" class="row g-3 align-items-end">
+      <div class="col-md-6">
+        <label class="form-label">Excel del universo FACT</label>
+        <input type="file" class="form-control" name="archivo" accept=".xlsx">
+        <div class="form-text">Ruta por defecto: <code class="small">{{ ruta }}</code></div>
+      </div>
+      <div class="col-md-4">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="usar_defecto" value="1" id="ud" checked>
+          <label class="form-check-label" for="ud">Usar el Excel por defecto (ignora el archivo de arriba)</label>
+        </div>
+      </div>
+      <div class="col-md-2 d-grid">
+        <button class="btn btn-primary" name="accion" value="previsualizar">Previsualizar</button>
+      </div>
+    </form>
+    <p class="small text-muted mt-2 mb-0">La previsualizaci&oacute;n no toca la base de datos. Revisa los valores y despu&eacute;s aplica.</p>
+  </div>
+</div>
+{% else %}
+
+<div class="card mb-4">
+  <div class="card-header bg-white d-flex justify-content-between align-items-center fw-semibold">
+    <span>Paso 2 &mdash; Revisi&oacute;n</span>
+    <span class="small text-muted">A&ntilde;o activo: {{ a.anio_cobro if a else '?' }} &middot; IPC {{ (plan.ipc * 100)|round(2) }}%</span>
+  </div>
+  <div class="card-body py-3">
+    <div class="d-flex flex-wrap gap-3 mb-1">
+      <div><span class="text-muted small">Clientes nuevos:</span> <strong>{{ plan.nuevos }}</strong></div>
+      <div><span class="text-muted small">Ya en BD (se actualizan):</span> <strong>{{ plan.existentes }}</strong></div>
+      <div><span class="text-muted small">Grupos de factura:</span> <strong>{{ plan.grupos|length }}</strong></div>
+      <div><span class="text-muted small">Total presupuestos iniciales:</span> <strong class="text-success">{{ plan.total_presupuesto|money }}</strong></div>
+    </div>
+    <div class="table-responsive" style="max-height: 420px;">
+    <table class="table table-sm table-hover mb-0">
+      <thead><tr><th>C&oacute;d</th><th>Nombre</th><th>Tipo</th><th class="num">Cobrado AG-2024</th>
+        <th class="num">Presupuesto IPC</th><th>RF</th><th></th></tr></thead>
+      <tbody>
+      {% for c in plan.clientes %}
+        <tr>
+          <td class="fw-semibold">{{ c.codigo }}</td>
+          <td>{{ c.nombre }}{% if c.ya_en_bd %} <span class="badge bg-secondary">ya en BD</span>{% endif %}</td>
+          <td>{{ c.tipo }}</td>
+          <td class="num">{{ c.cobrado_2024|money }}</td>
+          <td class="num fw-semibold">{{ c.presupuesto|money }}</td>
+          <td>{% if c.rf %}<span class="badge bg-warning text-dark">RF 11%</span>{% else %}<span class="badge bg-secondary">sin RF</span>{% endif %}</td>
+          <td class="small text-muted">{{ c.obs|truncate(60, true) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+  <div class="card-footer bg-white">
+    <div class="d-flex gap-2">
+      <form method="post" class="d-inline">
+        <input type="hidden" name="usar_defecto" value="1">
+        <button class="btn btn-success" name="accion" value="aplicar"
+                onclick="return confirm('&iquest;Aplicas la importaci&oacute;n al universo FACT? Es idempotente: lo existente solo se actualiza.');">
+          <i class="bi bi-check2-circle"></i> Aplicar importaci&oacute;n</button>
+      </form>
+      <a class="btn btn-outline-secondary" href="{{ url_for('main.facturacion_importar') }}">Cancelar</a>
+    </div>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header bg-white fw-semibold">Grupos de factura que se van a crear (1 grupo = 1 factura)</div>
+  <div class="table-responsive" style="max-height: 320px;">
+  <table class="table table-sm mb-0">
+    <thead><tr><th>C&oacute;digo</th><th>Factura a nombre de (pagador)</th><th>Miembros</th><th class="num">Cobrado AG-2024</th></tr></thead>
+    <tbody>
+    {% for g in plan.grupos %}
+      <tr>
+        <td><span class="badge bg-success">{{ g.codigo }}</span></td>
+        <td class="fw-semibold">{{ g.nombre }}</td>
+        <td class="small">{{ g.miembros|join(', ') }}</td>
+        <td class="num">{{ g.cobrado_real|money }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,36 +1,68 @@
 {% extends "base.html" %}
-{% block title %}Cuentas de cobro{% endblock %}
+{% block title %}{{ 'Facturaci&oacute;n' if seccion == 'FACT' else 'Cuentas de cobro' }}{% endblock %}
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <h3 class="mb-0">Cuentas de cobro {{ a.anio_cobro }}</h3>
-  <a class="btn btn-primary" href="{{ url_for('main.cuenta_nueva') }}"><i class="bi bi-plus-lg"></i> Nueva cuenta</a>
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <h3 class="mb-0 d-flex align-items-center gap-3 flex-wrap">
+    {% if seccion == 'FACT' %}Facturaci&oacute;n {{ a.anio_cobro }}{% else %}Cuentas de cobro {{ a.anio_cobro }}{% endif %}
+    <span class="btn-group btn-group-sm">
+      <a class="btn {{ 'btn-dark' if seccion != 'FACT' else 'btn-outline-secondary' }}" href="{{ url_for('main.cuentas', seccion='CDEC') }}">Cuentas de cobro</a>
+      <a class="btn {{ 'btn-success' if seccion == 'FACT' else 'btn-outline-secondary' }}" href="{{ url_for('main.cuentas', seccion='FACT') }}">Facturaci&oacute;n</a>
+    </span>
+  </h3>
+  <a class="btn btn-primary" href="{{ url_for('main.cuenta_nueva', seccion=seccion) }}"><i class="bi bi-plus-lg"></i> {% if seccion == 'FACT' %}Nueva factura{% else %}Nueva cuenta{% endif %}</a>
 </div>
 
 <ul class="nav nav-pills mb-3">
-  <li class="nav-item"><a class="nav-link {{ 'active' if not estado }}" href="{{ url_for('main.cuentas') }}">Todas</a></li>
+  <li class="nav-item"><a class="nav-link {{ 'active' if not estado }}" href="{{ url_for('main.cuentas', seccion=seccion) }}">Todas</a></li>
   {% for e in estados %}
-  <li class="nav-item"><a class="nav-link {{ 'active' if estado == e }}" href="?estado={{ e }}">{{ e }}</a></li>
+  <li class="nav-item"><a class="nav-link {{ 'active' if estado == e }}" href="?estado={{ e }}&amp;seccion={{ seccion }}">{{ e }}</a></li>
   {% endfor %}
 </ul>
 
 <div class="card">
   <div class="table-responsive">
   <table class="table table-sm table-hover mb-0">
+    {% if seccion == 'FACT' %}
+    <thead><tr><th>Nº</th><th>Fecha</th><th>Clientes</th><th class="num">Base</th>
+      <th class="num">IVA</th><th class="num">Retefte</th><th class="num">Neto a pagar</th>
+      <th>Estado</th><th>Folio / envío</th><th></th></tr></thead>
+    {% else %}
     <thead><tr><th>Nº</th><th>Fecha</th><th>Clientes</th><th class="num">Total</th>
       <th class="num">Ajustes</th><th class="num">Pagado</th><th class="num">Saldo</th>
       <th>Estado</th><th>Último envío</th><th></th></tr></thead>
+    {% endif %}
     <tbody>
     {% for c in cuentas %}
+      {% set es_fact = (c.seccion or 'CDEC') == 'FACT' %}
+      {% set tf = c.totales_factura if es_fact else None %}
       <tr>
         <td><a href="{{ url_for('main.cuenta_detalle', cid=c.id) }}" class="fw-semibold">{{ c.numero_formateado }}</a></td>
         <td>{{ c.fecha.strftime('%d/%m/%Y') if c.fecha }}</td>
         <td class="small">{% for l in c.lineas %}{% if l.estado == 'ACTIVA' %}{{ l.cliente.nombre|truncate(30, true) }}{% if not loop.last %}, {% endif %}{% endif %}{% endfor %}</td>
+        {% if es_fact %}
+        <td class="num">{{ (c.subtotal)|money }}</td>
+        <td class="num">+ {{ (tf.iva)|money }}</td>
+        <td class="num text-danger">- {{ (tf.rf)|money }}</td>
+        <td class="num fw-bold">{{ (tf.total)|money }}</td>
+        {% else %}
         <td class="num">{{ (c.total)|money }}</td>
         <td class="num">{% if c.total_ajustes %}-{% endif %}{{ (c.total_ajustes|abs)|money }}</td>
         <td class="num text-success">{{ (c.total_pagado)|money }}</td>
         <td class="num {% if c.saldo > 0 %}text-danger{% endif %}">{{ (c.saldo)|money }}</td>
+        {% endif %}
         <td><span class="badge badge-estado-{{ c.estado }}">{{ c.estado }}</span></td>
+        {% if es_fact %}
+        <td>
+          <form method="post" action="{{ url_for('main.cuenta_folio', cid=c.id) }}" class="d-flex gap-1 align-items-center">
+            <input class="form-control form-control-sm" style="max-width: 140px;" name="folio"
+                   value="{{ c.folio_factura or '' }}" placeholder="Nº factura electrónica">
+            <button class="btn btn-sm btn-outline-success" title="Guardar folio"><i class="bi bi-check-lg"></i></button>
+          </form>
+          <div class="small text-muted mt-1">{% set e = c.ultimo_envio %}{% if e %}{{ e.medio }} · {{ e.fecha.strftime('%d/%m/%y') }}{% endif %}</div>
+        </td>
+        {% else %}
         <td class="small">{% set e = c.ultimo_envio %}{% if e %}{{ e.medio }} · {{ e.fecha.strftime('%d/%m/%y') }}{% endif %}</td>
+        {% endif %}
         <td>
           <div class="d-flex gap-1">
             <button class="btn btn-sm btn-outline-secondary" data-pdf="{{ url_for('main.cuenta_pdf', cid=c.id) }}"
@@ -59,7 +91,7 @@
         </td>
       </tr>
     {% else %}
-      <tr><td colspan="10" class="text-center text-muted py-4">Sin cuentas{% if estado %} en estado {{ estado }}{% endif %}.</td></tr>
+      <tr><td colspan="10" class="text-center text-muted py-4">{% if seccion == 'FACT' %}Sin facturas{% else %}Sin cuentas{% endif %}{% if estado %} en estado {{ estado }}{% endif %}. Crea la primera con el bot&oacute;n de arriba.</td></tr>
     {% endfor %}
     </tbody>
   </table>

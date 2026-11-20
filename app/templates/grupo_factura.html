@@ -29,7 +29,9 @@
           <tbody>
           {% for f in filas %}
             <tr>
-              <td>{{ f.cli.nombre }}
+              <td>
+                <a href="{{ url_for('main.cliente_detalle', cid=f.cli.id) }}#asesorias" target="_blank"
+                   title="Abrir la ficha para construir/ajustar el presupuesto de este cliente (se abre aparte, no pierdes la factura)">{{ f.cli.nombre }}</a>
                 {% if f.cli.es_pagador %}<span class="badge bg-info text-dark">pagador</span>{% endif %}</td>
               <td class="num text-muted">{{ f.presup|money }}</td>
               <td><input class="form-control form-control-sm text-end val-linea" type="number" step="1"

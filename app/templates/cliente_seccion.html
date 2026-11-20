@@ -78,7 +78,7 @@
       {% set es_fact = (c.seccion or 'CDEC') == 'FACT' %}
       {% set tf = c.totales_factura if es_fact else None %}
       <tr>
-        <td class="fw-semibold">{{ c.numero_formateado }}</td>
+        <td class="fw-semibold">{{ c.numero_formateado }}{% if (c.seccion or 'CDEC') == 'FACT' %}<div class="small text-muted">CDEC interna {{ a.prefijo }}-{{ "%03d"|format(c.numero) }}</div>{% endif %}</td>
         <td><span class="badge bg-secondary">{{ c.estado }}</span></td>
         <td>{% if es_fact %}<span class="badge bg-success">FACT</span>{% else %}<span class="badge bg-dark">CDEC</span>{% endif %}</td>
         {% if tf %}
@@ -90,8 +90,9 @@
           <form method="post" class="row g-1 align-items-center">
             <input type="hidden" name="accion" value="datos_cuenta">
             <input type="hidden" name="cuenta_id" value="{{ c.id }}">
-            <div class="col-5"><input class="form-control form-control-sm" name="folio" value="{{ c.folio_factura or '' }}" placeholder="folio factura (ej: FES-12345)"></div>
-            <div class="col-3"><input class="form-control form-control-sm" name="iva" type="number" step="0.1" min="0" max="100" value="{{ c.pct_iva if c.pct_iva is not none else iva_def }}" title="% IVA"></div>
+            <div class="col-4"><input class="form-control form-control-sm" name="folio" value="{{ c.folio_factura or '' }}" placeholder="folio factura (ej: FES-12345)"></div>
+            <div class="col-2"><input class="form-control form-control-sm" type="date" name="fecha_factura" value="{{ c.fecha.strftime('%Y-%m-%d') if c.fecha }}" title="Fecha de la factura real"></div>
+            <div class="col-2"><input class="form-control form-control-sm" name="iva" type="number" step="0.1" min="0" max="100" value="{{ c.pct_iva if c.pct_iva is not none else iva_def }}" title="% IVA"></div>
             <div class="col-2"><input class="form-control form-control-sm" name="rf" type="number" step="0.1" min="0" max="100" value="{{ c.pct_rf if c.pct_rf is not none else rf_def }}" title="% retenci&oacute;n"></div>
             <div class="col-2"><button class="btn btn-sm btn-outline-primary w-100" title="Guardar folio y porcentajes"><i class="bi bi-check-lg"></i></button></div>
           </form>

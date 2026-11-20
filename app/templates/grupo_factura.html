@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% block title %}Factura de {{ g.nombre }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3 flex-wrap gap-2">
+  <div>
+    <h3 class="mb-1">Factura del grupo <span class="text-success">{{ g.nombre }}</span>
+      <span class="badge bg-success">FACT</span></h3>
+    <div class="text-muted small">A nombre de <strong>{{ (g.pagador.nombre if g.pagador else 'sin pagador') }}</strong>.
+      Los valores arrancan del presupuesto vigente de cada miembro (columna referencia) &mdash; lo que guardes aqu&iacute; va <strong>solo a la factura</strong>, los presupuestos quedan intactos.</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('main.grupos', seccion='FACT') }}">Volver a grupos</a>
+</div>
+
+{% if cuenta %}
+<div class="alert alert-info py-2 small mb-3">
+  Este grupo ya tiene la factura <a href="{{ url_for('main.cuenta_detalle', cid=cuenta.id) }}"><strong>{{ cuenta.numero_formateado }}</strong></a>
+  ({{ cuenta.estado }}){% if cuenta.folio_factura %} &middot; folio electr&oacute;nico: <strong>{{ cuenta.folio_factura }}</strong>{% endif %}.
+  Al guardar se actualizan sus l&iacute;neas con los valores de abajo.
+</div>
+{% endif %}
+
+<div class="row g-4">
+  <div class="col-lg-7">
+    <div class="card">
+      <div class="card-header bg-white fw-semibold">L&iacute;neas de la factura (editables)</div>
+      <div class="card-body">
+        <table class="table table-sm align-middle mb-0" id="tablaFactura">
+          <thead><tr><th>Cliente</th><th class="num">Presupuesto (ref.)</th><th style="width: 160px;">Valor a facturar</th></tr></thead>
+          <tbody>
+          {% for f in filas %}
+            <tr>
+              <td>{{ f.cli.nombre }}
+                {% if f.cli.es_pagador %}<span class="badge bg-info text-dark">pagador</span>{% endif %}</td>
+              <td class="num text-muted">{{ f.presup|money }}</td>
+              <td><input class="form-control form-control-sm text-end val-linea" type="number" step="1"
+                         name="valor_{{ f.cli.id }}" value="{{ f.valor|int }}" data-presup="{{ f.presup }}"></td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        <label class="form-label small mt-3 mb-1">Observaciones del soporte <span class="text-muted fw-normal">(opcional; salen en el PDF)</span></label>
+        <textarea class="form-control form-control-sm" id="obsFactura" rows="2"
+                  placeholder="Ej: incluye asesoria de {{ a.anio_gravable if a else '' }}...">{{ cuenta.observaciones if cuenta else '' }}</textarea>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-5">
+    <div class="card border-success">
+      <div class="card-header bg-white fw-semibold">Como quedaria la factura</div>
+      <div class="card-body">
+        <table class="table table-sm mb-2">
+          <tbody>
+            <tr><td>Base (suma de l&iacute;neas)</td><td class="num fw-semibold" id="pvBase">$ 0</td></tr>
+            <tr><td>IVA <span class="text-muted" id="pvIvaPct">({{ iva_def }}%)</span></td><td class="num" id="pvIva">$ 0</td></tr>
+            <tr><td>Retenci&oacute;n en la fuente <span class="text-muted" id="pvRfPct">({{ rf_def }}%)</span></td><td class="num text-danger" id="pvRf">$ 0</td></tr>
+            <tr class="fs-5 fw-bold border-top"><td>NETO A PAGAR</td><td class="num text-success" id="pvNeto">$ 0</td></tr>
+          </tbody>
+        </table>
+        <div class="form-check form-switch small mb-2">
+          <input class="form-check-input" type="checkbox" id="pvSinRf">
+          <label class="form-check-label" for="pvSinRf">Este grupo sale <strong>sin retenci&oacute;n</strong> (pagador RST o persona natural no obligada)</label>
+        </div>
+        <div class="small text-muted mb-3" id="pvDesviacion"></div>
+        {% if cuenta %}
+        <button class="btn btn-success w-100 mb-2" id="btnGuardar"><i class="bi bi-check2-circle"></i> Guardar cambios en {{ cuenta.numero_formateado }}</button>
+        {% else %}
+        <button class="btn btn-success w-100 mb-2" id="btnGuardar"><i class="bi bi-check2-circle"></i> Crear factura del grupo (BORRADOR)</button>
+        {% endif %}
+        <div id="pvMsg" class="small"></div>
+      </div>
+    </div>
+
+    <div class="card mt-3">
+      <div class="card-header bg-white fw-semibold">PDF del soporte</div>
+      <div class="card-body d-grid gap-2">
+        <button class="btn btn-outline-primary" id="btnPreview"><i class="bi bi-eye"></i> Previsualizar PDF con estos valores</button>
+        {% if cuenta %}
+        <a class="btn btn-outline-secondary" href="{{ url_for('main.cuenta_pdf', cid=cuenta.id) }}" target="_blank"><i class="bi bi-filetype-pdf"></i> PDF guardado de {{ cuenta.numero_formateado }}</a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const IVA_DEF = {{ iva_def }};
+const RF_DEF = {{ rf_def }};
+const fmt = n => "$ " + Math.round(n).toLocaleString("es-CO");
+
+function valores(){
+  return [...document.querySelectorAll(".val-linea")].map(i => parseFloat(i.value || 0));
+}
+function recalc(){
+  const vs = valores();
+  const base = vs.reduce((a, b) => a + b, 0);
+  const iva = Math.round(base * IVA_DEF / 100);
+  const conRf = !document.getElementById("pvSinRf").checked;
+  const rf = conRf ? Math.round(base * RF_DEF / 100) : 0;
+  document.getElementById("pvBase").textContent = fmt(base);
+  document.getElementById("pvIva").textContent = "+ " + fmt(iva);
+  document.getElementById("pvRf").textContent = "- " + fmt(rf);
+  document.getElementById("pvNeto").textContent = fmt(base + iva - rf);
+  // desviaciones vs presupuesto
+  const desv = [];
+  document.querySelectorAll(".val-linea").forEach(inp => {
+    const presup = parseFloat(inp.dataset.presup || 0);
+    const v = parseFloat(inp.value || 0);
+    if (Math.abs(v - presup) > 0.5)
+      desv.push((v > presup ? "+" : "") + fmt(v - presup));
+  });
+  document.getElementById("pvDesviacion").textContent =
+    desv.length ? "Desviaciones vs presupuesto: " + desv.join(" | ") : "Todo coincide con los presupuestos vigentes.";
+}
+document.querySelectorAll(".val-linea").forEach(i => i.addEventListener("input", recalc));
+document.getElementById("pvSinRf").addEventListener("change", recalc);
+recalc();
+
+// guardar por fetch (no recarga)
+document.getElementById("btnGuardar").addEventListener("click", async () => {
+  const btn = document.getElementById("btnGuardar");
+  const fd = new FormData();
+  document.querySelectorAll(".val-linea").forEach(i => fd.append(i.name, i.value));
+  fd.append("observaciones", document.getElementById("obsFactura").value);
+  btn.disabled = true;
+  try {
+    const r = await fetch({{ url_for('main.grupo_factura_guardar', gid=g.id)|tojson }}, {
+      method: "POST", body: fd,
+      headers: { "Accept": "application/json" }
+    });
+    const d = await r.json();
+    const box = document.getElementById("pvMsg");
+    if (d.ok){
+      box.className = "small text-success";
+      box.textContent = d.ok + " " + (d.mensaje || d.ok);
+      box.textContent = d.mensaje || d.ok;
+      setTimeout(() => location.reload(), 1200);
+    } else {
+      box.className = "small text-danger";
+      box.textContent = d.error || "Error guardando";
+    }
+  } catch (e) {
+    const box = document.getElementById("pvMsg");
+    box.className = "small text-danger";
+    box.textContent = "Error de conexion: " + e;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// preview PDF con los valores editados (POST al endpoint de preview de cuenta_nueva)
+document.getElementById("btnPreview").addEventListener("click", () => {
+  const fd = new FormData();
+  document.querySelectorAll(".val-linea").forEach(i => fd.append("clientes", i.name.replace("valor_", "")));
+  document.querySelectorAll(".val-linea").forEach(i => fd.append("valor_" + i.name.replace("valor_", ""), i.value));
+  fd.append("pagador_id", "{{ g.pagador.id if g.pagador else '' }}");
+  fd.append("observaciones", document.getElementById("obsFactura").value);
+  fetch("{{ url_for('main.cuenta_preview') }}", { method: "POST", body: fd })
+    .then(r => { if (!r.ok) throw new Error("preview " + r.status); return r.blob(); })
+    .then(b => {
+      const url = URL.createObjectURL(b);
+      window.open(url, "_blank");
+    })
+    .catch(e => alert("No se pudo previsualizar: " + e + " (el preview muestra TOTAL, el neto lo ves arriba)"));
+});
+</script>
+{% endblock %}

@@ -33,6 +33,9 @@ def ejecutar(db):
         if cols_ct and "folio_factura" not in cols_ct:
             con.execute(text("ALTER TABLE cuentas_cobro ADD COLUMN folio_factura VARCHAR(60) DEFAULT ''"))
             con.commit()
+        if cols_ct and "numero_factura" not in cols_ct:
+            con.execute(text("ALTER TABLE cuentas_cobro ADD COLUMN numero_factura INTEGER"))
+            con.commit()
         if cols_ct and "pct_iva" not in cols_ct:
             con.execute(text("ALTER TABLE cuentas_cobro ADD COLUMN pct_iva FLOAT"))
             con.commit()

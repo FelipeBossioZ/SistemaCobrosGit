@@ -113,12 +113,18 @@ def _render_con_pillow(cuenta, ruta_png):
     f_txt = fuente(22)
     AL = 30          # alto de línea de texto normal
 
-    dr.text((M, y), d.get("titulo", "CUENTA DE COBRO"), font=f_h2, fill=MORADO)
+    _titulo_img = "FACTURA" if d.get("es_fact") else "CUENTA DE COBRO"
+    dr.text((M, y), _titulo_img, font=f_h2, fill=MORADO)
     y += 44
     ft, lin = _envuelto(d.get("numero", ""), 22)
     for l in lin:
         dr.text((M, y), l, font=ft, fill=NEGRO)
         y += AL
+    if d.get("folio_real"):
+        ft, lin = _envuelto("Factura electronica real: " + d.get("folio_real"), 18)
+        for l in lin:
+            dr.text((M, y), l, font=ft, fill=GRIS)
+            y += 26
     y += 10
 
     dr.text((M, y), "Cliente(s):", font=f_txt, fill=GRIS)

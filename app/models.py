@@ -324,13 +324,24 @@ class CuentaCobro(db.Model):
 
     seccion = db.Column(db.String(4), default="CDEC")          # sello al crear: la cuenta no migra de universo
     folio_factura = db.Column(db.String(60), default="")       # FACT: numero de la factura electronica ya expedida
+    numero_factura = db.Column(db.Integer)                     # FACT: consecutivo propio GTFF-AG.. (independiente de numero CDEC)
     pct_iva = db.Column(db.Float)                              # FACT: % IVA (None = default de parametros)
     pct_rf = db.Column(db.Float)                               # FACT: % retencion en la fuente (None = default)
 
     __table_args__ = (db.UniqueConstraint("anio_cobro_id", "numero", name="uq_numero_cuenta"),)
 
     @property
+    def numero_factura_formateado(self):
+        """GTFF-AG25-1 (prefijo del anio gravable + consecutivo propio de facturas)."""
+        a = self.anio
+        pref = ("GTFF-AG" + str(a.anio_gravable)[-2:]) if a else "GTFF"
+        n = self.numero_factura or self.numero
+        return f"{pref}-{n}"
+
+    @property
     def numero_formateado(self):
+        if (self.seccion or "CDEC") == "FACT":
+            return self.numero_factura_formateado
         a = self.anio
         return f"{a.prefijo}-{self.numero:03d}" if a else str(self.numero)
 
@@ -540,6 +551,17 @@ def iva_default_pct():
         return float(Parametro.get("fact_iva_default", str(IVA_DEFAULT)))
     except (TypeError, ValueError):
         return IVA_DEFAULT
+
+
+def numero_factura_libre(a):
+    """Consecutivo GTFF: el primero NO usado entre las facturas del anio (autorepara)."""
+    usados = {n for (n,) in db.session.query(CuentaCobro.numero_factura)
+              .filter(CuentaCobro.anio_cobro_id == a.id,
+                      CuentaCobro.numero_factura.isnot(None)).all()}
+    n = 1
+    while n in usados:
+        n += 1
+    return n
 
 
 def rf_default_pct():

@@ -159,9 +159,13 @@ def _dibujar(c, d):
     # ---------- 1. Encabezado morado ----------
     hb = 56
     caja(c, izq, y - hb, der, y, fill=MORADO)
-    _titulo_doc = "SOPORTE PARA FACTURA ELECTRÓNICA Nº " if d.get("es_fact") else "CUENTA DE COBRO Nº "
+    _titulo_doc = "FACTURA Nº " if d.get("es_fact") else "CUENTA DE COBRO Nº "
     tc(c, cx, y - 24, _titulo_doc + d["numero"], 13.5 if d.get("es_fact") else 15, bold=True, color=BLANCO)
-    tc(c, cx, y - 43, f"Medellín, {f.day} de {MESES[f.month - 1]} de {f.year}", 9.5, color=BLANCO)
+    if d.get("folio_real"):
+        tc(c, cx, y - 40, "Factura electrónica real: " + d.get("folio_real"), 9.5, bold=True, color=BLANCO)
+        tc(c, cx, y - 52, f"Medellín, {f.day} de {MESES[f.month - 1]} de {f.year}", 8.5, color=BLANCO)
+    else:
+        tc(c, cx, y - 43, f"Medellín, {f.day} de {MESES[f.month - 1]} de {f.year}", 9.5, color=BLANCO)
     y -= hb + 16
 
     # ---------- 2. SEÑOR / SEÑORA / SEÑORES (pagador) ----------
@@ -281,14 +285,15 @@ def _dibujar(c, d):
     y -= sb + 14
 
     # ---------- 7. Datos para el pago (alto corregido: ninguna línea sale de la caja) ----------
-    pb = 14 * len(banco) + 30
-    caja(c, izq, y - pb, der, y, fill=GRIS_CLARO)
-    t(c, izq + 10, y - 16, "DATOS PARA EL PAGO", 7, bold=True, color=MORADO)
-    yy = y - 32
-    for l in banco:
-        t(c, izq + 10, yy, l, 9)
-        yy -= 14
-    y -= pb + 14
+    if banco:
+        pb = 14 * len(banco) + 30
+        caja(c, izq, y - pb, der, y, fill=GRIS_CLARO)
+        t(c, izq + 10, y - 16, "DATOS PARA EL PAGO", 7, bold=True, color=MORADO)
+        yy = y - 32
+        for l in banco:
+            t(c, izq + 10, yy, l, 9)
+            yy -= 14
+        y -= pb + 14
 
     # ---------- 8. Observaciones (solo si hay observación para el PDF) ----------
     obs = (d["obs"] or "").strip()
@@ -367,6 +372,9 @@ def _datos_cuenta(cuenta):
     return {
         "numero": cuenta.numero_formateado,
         "fecha": cuenta.fecha or date.today(),
+        "folio_real": (cuenta.folio_factura or "").strip() if _es_fact else "",
+        "banco": [] if _es_fact else [l for l in Parametro.get("banco_info", "").split("\n") if l.strip()],
+        "formas_pago": [],
         "es_fact": _es_fact,
         "totales_fact": _tf,
         "pagador_nombre": pagador.nombre if pagador else "",
@@ -378,7 +386,6 @@ def _datos_cuenta(cuenta):
         "lineas": lineas,
         "ajustes": ajustes,
         "adicionales": adicionales,
-        "banco": [l for l in Parametro.get("banco_info", "").split("\n") if l.strip()],
         "emisor": _emisor_desde_parametros(),
         "obs": (cuenta.observaciones or "").strip(),
     }
@@ -391,6 +398,9 @@ def datos_preview(a, lineas, pagador, obs=""):
         "fecha": date.today(),
         "es_fact": False,
         "totales_fact": None,
+        "folio_real": "",
+        "banco": [l for l in Parametro.get("banco_info", "").split("\n") if l.strip()],
+        "formas_pago": [],
         "pagador_nombre": pagador.nombre if pagador else "",
         "pagador_saludo": saludo_de_cliente(pagador),
         "pagador_nit": pagador.nit_formateado if pagador else "",
@@ -400,7 +410,6 @@ def datos_preview(a, lineas, pagador, obs=""):
         "lineas": lineas,
         "ajustes": [],
         "adicionales": [],
-        "banco": [l for l in Parametro.get("banco_info", "").split("\n") if l.strip()],
         "emisor": _emisor_desde_parametros(),
         "obs": obs,
     }

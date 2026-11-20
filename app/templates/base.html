@@ -144,6 +144,12 @@
         <input class="form-control form-control-sm" type="date" name="fecha"></div>
       <div><label class="form-label small mb-1">Nota (opcional)</label>
         <input class="form-control form-control-sm" name="nota"></div>
+      <div class="alert alert-danger py-2 small mb-0 d-none" id="enviarFactBloque">
+        <div class="mb-1"><label class="form-label small mb-1 fw-bold">N&uacute;mero de la factura real (OBLIGATORIO)</label>
+          <input class="form-control form-control-sm" name="folio_factura" placeholder="Ej: FE 12345"></div>
+        <div><label class="form-label small mb-1">Fecha de la factura real</label>
+          <input class="form-control form-control-sm" type="date" name="fecha_factura"></div>
+      </div>
     </div>
     <div class="modal-footer py-2"><button class="btn btn-warning btn-sm"><i class="bi bi-send"></i> Registrar</button></div>
   </form>
@@ -548,6 +554,15 @@ document.addEventListener("click", e => {
   }
   if (acc === "anular") {
     modal.querySelector("textarea[name=motivo]").value = "";
+  }
+  if (acc === "enviar") {
+    const bloque = modal.querySelector("#enviarFactBloque");
+    if (bloque) {
+      const esFact = (b.dataset.seccion || "CDEC") === "FACT";
+      bloque.classList.toggle("d-none", !esFact);
+      bloque.querySelector("input[name=folio_factura]").required = esFact;
+      if (esFact) bloque.querySelector("input[name=fecha_factura]").value = new Date().toISOString().slice(0, 10);
+    }
   }
   new bootstrap.Modal(modal).show();
 });

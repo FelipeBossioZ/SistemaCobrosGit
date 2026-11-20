@@ -16,7 +16,7 @@ from .models import (db, Parametro, AnioCobro, GrupoFamiliar, Cliente,
                      AsesoriaCatalogo, AsesoriaCliente, PresupuestoHistorial,
                      Tarea)
 from .pdf_generator import generar_pdf, ruta_pdf
-from .models import iva_default_pct, rf_default_pct
+from .models import iva_default_pct, rf_default_pct, numero_factura_libre
 from . import rutas_comunes
 from .fact_import import previsualizar as fact_previsualizar, aplicar as fact_aplicar
 
@@ -116,7 +116,8 @@ def _nombre_pdf(cuenta):
     """Ochoa_Velasquez_Rafael_CdeC_26_001.pdf (pagador en nombre propio, luego CdeC + número)."""
     pag = cuenta.pagador_principal
     num = cuenta.numero_formateado.replace("-", "_")
-    return f"{_slug_archivo(_nombre_propio(pag.nombre if pag else ''))}_CdeC_{num}.pdf"
+    tipo = "FRA" if (cuenta.seccion or "CDEC") == "FACT" else "CdeC"
+    return f"{_slug_archivo(_nombre_propio(pag.nombre if pag else ''))}_{tipo}_{num}.pdf"
 
 
 def _numero_libre(a):
@@ -898,9 +899,12 @@ def cliente_cuenta_expresa(cid):
         if not p or p.vigente <= 0:
             return _res(f"{m.nombre} no tiene presupuesto {a.anio_cobro}. Cuenta no creada.", "error")
         lineas.append((m, p.vigente))
+    _es_fact_cli = (cli.seccion or "CDEC") == "FACT"
     cuenta = CuentaCobro(anio_cobro_id=a.id, numero=_numero_libre(a),
                          fecha=date.today(), estado="BORRADOR",
                          seccion=(cli.seccion or "CDEC"))
+    if _es_fact_cli:
+        cuenta.numero_factura = numero_factura_libre(a)
     cuenta.pagador_cliente_id = cli.id
     db.session.add(cuenta)
     db.session.flush()
@@ -1000,9 +1004,12 @@ def grupo_cuenta_expresa(gid):
             return redirect(destino)
         lineas.append((m, p.vigente))
     pagador = g.pagador or miembros[0]
+    _es_fact_g = (g.seccion_real or "CDEC") == "FACT"
     cuenta = CuentaCobro(anio_cobro_id=a.id, numero=_numero_libre(a),
                          fecha=date.today(), estado="BORRADOR",
                          seccion=(g.seccion_real or "CDEC"))
+    if _es_fact_g:
+        cuenta.numero_factura = numero_factura_libre(a)
     cuenta.pagador_cliente_id = pagador.id
     db.session.add(cuenta)
     db.session.flush()
@@ -1117,7 +1124,8 @@ def grupo_factura_guardar(gid):
     cambios = []
     if cuenta is None:
         cuenta = CuentaCobro(anio_cobro_id=a.id, numero=_numero_libre(a),
-                             fecha=date.today(), estado="BORRADOR", seccion="FACT")
+                             fecha=date.today(), estado="BORRADOR", seccion="FACT",
+                             numero_factura=numero_factura_libre(a))
         cuenta.pagador_cliente_id = pagador.id
         if cuenta.pct_iva is None:
             cuenta.pct_iva = iva_default_pct()
@@ -1945,6 +1953,8 @@ def cuenta_nueva():
             return redirect(url_for("main.cuenta_nueva"))
         cuenta = CuentaCobro(anio_cobro_id=a.id, numero=_numero_libre(a),
                              fecha=date.today(), estado="BORRADOR", seccion=seccion)
+        if seccion == "FACT":
+            cuenta.numero_factura = numero_factura_libre(a)
         db.session.add(cuenta)
         db.session.flush()
         for cid in request.form.getlist("clientes"):
@@ -1998,6 +2008,12 @@ def cuenta_folio(cid):
     """FACT: guarda el numero de la factura electronica (y % IVA/RF si se cambian)."""
     cuenta = db.get_or_404(CuentaCobro, cid)
     cuenta.folio_factura = (request.form.get("folio") or "").strip()
+    ff = (request.form.get("fecha_factura") or "").strip()
+    if ff:
+        try:
+            cuenta.fecha = date.fromisoformat(ff)
+        except ValueError:
+            pass
     for campo, attr in (("iva", "pct_iva"), ("rf", "pct_rf")):
         v = request.form.get(campo)
         if v not in (None, ""):
@@ -2190,6 +2206,20 @@ def cuenta_regenerar(cid):
 def cuenta_enviar(cid):
     cuenta = db.get_or_404(CuentaCobro, cid)
     f = request.form
+    es_fact = (cuenta.seccion or "CDEC") == "FACT"
+    if es_fact:
+        folio = (f.get("folio_factura") or "").strip()
+        if not folio:
+            flash("Para enviar una FACTURA el número de la factura real es OBLIGATORIO "
+                  "(se guarda en el sistema).", "error")
+            return redirect(request.referrer or url_for("main.cuenta_detalle", cid=cid))
+        cuenta.folio_factura = folio
+        fecha_fra = (f.get("fecha_factura") or "").strip()
+        if fecha_fra:
+            try:
+                cuenta.fecha = date.fromisoformat(fecha_fra)
+            except ValueError:
+                pass
     medio = f.get("medio", "Correo")
     fecha = f.get("fecha") or date.today().isoformat()
     db.session.add(Envio(cuenta_id=cuenta.id, medio=medio, fecha=date.fromisoformat(fecha),
@@ -2197,7 +2227,7 @@ def cuenta_enviar(cid):
     if cuenta.estado == "BORRADOR":
         cuenta.estado = "ENVIADA"
     db.session.commit()
-    flash("Envío registrado", "ok")
+    flash("Envío registrado" + (" · factura real " + cuenta.folio_factura if es_fact else ""), "ok")
     return redirect(url_for("main.cuenta_detalle", cid=cid))
 
 

@@ -39,7 +39,7 @@
             data-numero="{{ cuenta.numero_formateado }}">
       <i class="bi bi-image"></i> Imagen WhatsApp</button>
     <button class="btn btn-outline-warning btn-sm" data-accion="enviar" data-cid="{{ cuenta.id }}"
-            data-numero="{{ cuenta.numero_formateado }}"><i class="bi bi-send"></i> Registrar envío</button>
+            data-numero="{{ cuenta.numero_formateado }}" data-seccion="{{ cuenta.seccion or 'CDEC' }}"><i class="bi bi-send"></i> Registrar envío</button>
     <button class="btn btn-outline-success btn-sm" data-accion="pago" data-cid="{{ cuenta.id }}"
             data-numero="{{ cuenta.numero_formateado }}" data-saldo="{{ cuenta.saldo|int }}">
       <i class="bi bi-cash-coin"></i> Registrar pago</button>
@@ -220,6 +220,10 @@
           </div>
           <div class="col-6"><input class="form-control form-control-sm" type="date" name="fecha"></div>
           <div class="col-12"><input class="form-control form-control-sm" name="nota" placeholder="Nota (opcional)"></div>
+          {% if (cuenta.seccion or 'CDEC') == 'FACT' %}
+          <div class="col-6"><input class="form-control form-control-sm" name="folio_factura" placeholder="Nº de la factura real (OBLIGATORIO)" required value="{{ cuenta.folio_factura or '' }}"></div>
+          <div class="col-6"><input class="form-control form-control-sm" type="date" name="fecha_factura" title="Fecha de la factura real" value="{{ cuenta.fecha.strftime('%Y-%m-%d') if cuenta.fecha }}"></div>
+          {% endif %}
           <div class="col-12"><button class="btn btn-warning btn-sm"><i class="bi bi-send"></i> Registrar envío</button></div>
         </form>
         {% endif %}
@@ -227,7 +231,7 @@
     </div>
 
     <div class="card mb-4">
-      <div class="card-header bg-white fw-semibold">Pagos</div>
+      <div class="card-header bg-white fw-semibold">{% if (cuenta.seccion or 'CDEC') == 'FACT' %}Pagos <span class="text-muted fw-normal small">(la factura se cobra por la factura electr&oacute;nica real; registrar aqu&iacute; solo si quieres control interno)</span>{% else %}Pagos{% endif %}</div>
       <div class="card-body">
         {% for p in cuenta.pagos %}
           <div class="small mb-1"><i class="bi bi-cash"></i> <strong>{{ (p.valor)|money }}</strong> · {{ p.forma }} · {{ p.fecha.strftime('%d/%m/%Y') }}
